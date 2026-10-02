@@ -96,35 +96,75 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "                    if (settingsDialog.ShowDialog(this) != DialogResult.OK) return;" + $nl +
 "                    settings = settingsDialog.Settings;" + $nl +
 "                }" + $nl + $nl +
-"                string sourcePath = string.IsNullOrWhiteSpace(selectedAsset.SourceFile.originalPath) ? selectedAsset.SourceFile.fullName : selectedAsset.SourceFile.originalPath;" + $nl +
-"                string extension = Path.GetExtension(sourcePath);" + $nl +
-"                if (string.IsNullOrEmpty(extension)) extension = "".unity3d"";" + $nl + $nl +
-"                using (var saveDialog = new SaveFileDialog())" + $nl +
+""                string sourcePath = string.IsNullOrWhiteSpace(selectedAsset.SourceFile.originalPath) ? selectedAsset.SourceFile.fullName : selectedAsset.SourceFile.originalPath;" + $nl +
+"                if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))" + $nl +
 "                {" + $nl +
-"                    saveDialog.Title = ""Save modified Unity file"";" + $nl +
-"                    saveDialog.Filter = extension.TrimStart('.').ToUpperInvariant() + "" file|*"" + extension + ""|All files|*.*"";" + $nl +
-"                    saveDialog.FileName = Path.GetFileNameWithoutExtension(sourcePath) + ""_juancho"" + extension;" + $nl +
-"                    saveDialog.InitialDirectory = Path.GetDirectoryName(sourcePath);" + $nl +
-"                    saveDialog.OverwritePrompt = true;" + $nl +
-"                    if (saveDialog.ShowDialog(this) != DialogResult.OK) return;" + $nl + $nl +
-"                    replaceSelectedTextureToolStripMenuItem.Enabled = false;" + $nl +
+"                    MessageBox.Show(this, ""The opened Unity file could not be found on disk."", ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Error);" + $nl +
+"                    return;" + $nl +
+"                }" + $nl + $nl +
+"                sourcePath = Path.GetFullPath(sourcePath);" + $nl +
+"                string backupPath = sourcePath + "".bak"";" + $nl +
+"                var confirm = MessageBox.Show(" + $nl +
+"                    this," + $nl +
+"                    ""Save will replace the selected Texture2D directly inside the Unity file that is currently open."" + Environment.NewLine + Environment.NewLine +" + $nl +
+"                    ""File:"" + Environment.NewLine + sourcePath + Environment.NewLine + Environment.NewLine +" + $nl +
+"                    ""A backup of the current file will be kept as:"" + Environment.NewLine + backupPath + Environment.NewLine + Environment.NewLine +" + $nl +
+"                    ""Continue?""," + $nl +
+"                    ""Juancho - Replace Texture2D""," + $nl +
+"                    MessageBoxButtons.YesNo," + $nl +
+"                    MessageBoxIcon.Warning);" + $nl + $nl +
+"                if (confirm != DialogResult.Yes) return;" + $nl + $nl +
+"                string[] reloadPaths = assetsManager.assetsFileList" + $nl +
+"                    .Select(x => string.IsNullOrWhiteSpace(x.originalPath) ? x.fullName : x.originalPath)" + $nl +
+"                    .Where(File.Exists)" + $nl +
+"                    .Select(Path.GetFullPath)" + $nl +
+"                    .Distinct(StringComparer.OrdinalIgnoreCase)" + $nl +
+"                    .ToArray();" + $nl + $nl +
+"                replaceSelectedTextureToolStripMenuItem.Enabled = false;" + $nl +
+"                StatusStripUpdate(""Juancho: preparing in-place Texture2D replacement..."");" + $nl +
+"                try" + $nl +
+"                {" + $nl +
+"                    // Release AssetStudio's open file handles before replacing the file on disk." + $nl +
+"                    ResetForm();" + $nl + $nl +
 "                    StatusStripUpdate(""Juancho: replacing selected Texture2D..."");" + $nl +
+"                    JuanchoReplacementResult result = await Task.Run(() =>" + $nl +
+"                        JuanchoTextureReplacer.ReplaceTexture(" + $nl +
+"                            sourcePath," + $nl +
+"                            selectedAsset.m_PathID," + $nl +
+"                            selectedAsset.Text," + $nl +
+"                            imageDialog.FileName," + $nl +
+"                            settings));" + $nl + $nl +
+"                    StatusStripUpdate(""Juancho: Texture2D replacement finished. Reloading..."");" + $nl +
+"                    assetsManager.SpecifyUnityVersion = specifyUnityVersion.Text;" + $nl +
+"                    await Task.Run(() => assetsManager.LoadFiles(reloadPaths.Length > 0 ? reloadPaths : new[] { sourcePath }));" + $nl +
+"                    BuildAssetStructures();" + $nl + $nl +
+"                    string actual = $""{result.Width} × {result.Height}, {(AssetsTools.NET.Texture.TextureFormat)result.Format}, {result.MipCount} mip(s)"";" + $nl +
+"                    MessageBox.Show(this," + $nl +
+"                        ""Texture2D replaced and verified successfully in the opened Unity file."" + Environment.NewLine + Environment.NewLine +" + $nl +
+"                        ""Final Texture2D settings:"" + Environment.NewLine + actual + Environment.NewLine + Environment.NewLine +" + $nl +
+"                        ""Backup:"" + Environment.NewLine + backupPath," + $nl +
+"                        ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Information);" + $nl +
+"                }" + $nl +
+"                catch (Exception ex)" + $nl +
+"                {" + $nl +
+"                    StatusStripUpdate(""Juancho: Texture2D replacement failed."");" + $nl +
 "                    try" + $nl +
 "                    {" + $nl +
-"                        JuanchoReplacementResult result = await Task.Run(() => JuanchoTextureReplacer.ReplaceTexture(selectedAsset, imageDialog.FileName, saveDialog.FileName, settings));" + $nl +
-"                        StatusStripUpdate(""Juancho: Texture2D replacement finished."");" + $nl +
-"                        string actual = $""{result.Width} × {result.Height}, {(AssetsTools.NET.Texture.TextureFormat)result.Format}, {result.MipCount} mip(s)"";" + $nl +
-"                        MessageBox.Show(this, ""Texture2D replaced and verified successfully."" + Environment.NewLine + Environment.NewLine + ""Final Texture2D settings:"" + Environment.NewLine + actual + Environment.NewLine + Environment.NewLine + ""Saved file:"" + Environment.NewLine + saveDialog.FileName, ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Information);" + $nl +
+"                        assetsManager.SpecifyUnityVersion = specifyUnityVersion.Text;" + $nl +
+"                        await Task.Run(() => assetsManager.LoadFiles(reloadPaths.Length > 0 ? reloadPaths : new[] { sourcePath }));" + $nl +
+"                        BuildAssetStructures();" + $nl +
 "                    }" + $nl +
-"                    catch (Exception ex)" + $nl +
+"                    catch" + $nl +
 "                    {" + $nl +
-"                        StatusStripUpdate(""Juancho: Texture2D replacement failed."");" + $nl +
-"                        MessageBox.Show(this, ""Texture2D replacement failed."" + Environment.NewLine + Environment.NewLine + ex.Message, ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Error);" + $nl +
-"                    }" + $nl +
-"                    finally" + $nl +
-"                    {" + $nl +
-"                        replaceSelectedTextureToolStripMenuItem.Enabled = true;" + $nl +
-"                    }" + $nl +
+"                        // Keep the original replacement error as the message shown to the user." + $nl +
+"                    }" + $nl + $nl +
+"                    MessageBox.Show(this," + $nl +
+"                        ""Texture2D replacement failed."" + Environment.NewLine + Environment.NewLine + ex.Message," + $nl +
+"                        ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Error);" + $nl +
+"                }" + $nl +
+"                finally" + $nl +
+"                {" + $nl +
+"                    replaceSelectedTextureToolStripMenuItem.Enabled = true;" + $nl +
 "                }" + $nl +
 "            }" + $nl +
 "        }" + $nl + $nl
