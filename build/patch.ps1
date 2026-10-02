@@ -169,6 +169,7 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "            }" + $nl +
 "        }" + $nl + $nl
 
+    $marker = "        private void showExpOpt_Click(object sender, EventArgs e)"
     if ($formText -notmatch 'BuildAssetStructuresAndSelectAsync') {
         $helper =
 "        private async Task BuildAssetStructuresAndSelectAsync(long targetPathId, string targetName)" + $nl +
@@ -247,7 +248,6 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "        }" + $nl + $nl;
         $formText = $formText.Replace($marker, $helper + $marker)
     }
-    $marker = "        private void showExpOpt_Click(object sender, EventArgs e)"
     if (-not $formText.Contains($marker)) { throw "Could not find form insertion marker." }
     $formText = $formText.Replace($marker, $handler + $marker)
     Set-Content $form $formText -Encoding UTF8
