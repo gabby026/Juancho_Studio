@@ -210,6 +210,13 @@ namespace AssetStudioGUI
                 throw new InvalidOperationException($"Path ID {pathId} is not a Texture2D.");
 
             var baseField = manager.GetBaseField(fileInst, info);
+
+            // UABEA explicitly changes the large Texture2D payload fields to
+            // ByteArray before making/writing the value field. This is important
+            // for reliable serialization of Unity image data instead of leaving
+            // the original array representation in place.
+            ForceTextureByteArrayFields(baseField);
+
             string currentName = baseField["m_Name"].AsString;
             if (!string.IsNullOrEmpty(assetName) && !string.Equals(currentName, assetName, StringComparison.Ordinal))
                 throw new InvalidOperationException($"The selected Texture2D resolved to '{currentName}'.");
@@ -378,6 +385,24 @@ namespace AssetStudioGUI
             finally
             {
                 manager.UnloadAll();
+            }
+        }
+
+        private static void ForceTextureByteArrayFields(AssetTypeValueField baseField)
+        {
+            if (baseField == null)
+                throw new ArgumentNullException(nameof(baseField));
+
+            AssetTypeValueField imageData = baseField["image data"];
+            if (!imageData.IsDummy && imageData.TemplateField != null)
+                imageData.TemplateField.ValueType = AssetValueType.ByteArray;
+
+            AssetTypeValueField platformBlob = baseField["m_PlatformBlob"];
+            if (!platformBlob.IsDummy)
+            {
+                AssetTypeValueField platformBlobArray = platformBlob["Array"];
+                if (!platformBlobArray.IsDummy && platformBlobArray.TemplateField != null)
+                    platformBlobArray.TemplateField.ValueType = AssetValueType.ByteArray;
             }
         }
 
