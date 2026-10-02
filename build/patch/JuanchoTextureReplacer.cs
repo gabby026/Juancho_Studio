@@ -209,12 +209,17 @@ namespace AssetStudioGUI
             if (info.GetTypeId(fileInst.file) != (int)AssetClassID.Texture2D)
                 throw new InvalidOperationException($"Path ID {pathId} is not a Texture2D.");
 
-            var baseField = manager.GetBaseField(fileInst, info);
+            // Match UABEA's order exactly: change the template fields to ByteArray
+            // BEFORE the asset value is constructed. This prevents large image data
+            // from remaining in the original element-by-element array representation.
+            var textureTemplate = manager.GetTemplateBaseField(fileInst, info);
+            if (textureTemplate == null)
+                throw new InvalidOperationException("Could not create the Texture2D template field.");
+            ForceTextureByteArrayTemplate(textureTemplate);
 
-            // UABEA explicitly changes the large Texture2D payload fields to
-            // ByteArray before making/writing the value field. This is important
-            // for reliable serialization of Unity image data instead of leaving
-            // the original array representation in place.
+            var baseField = manager.GetBaseField(fileInst, info);
+            if (baseField == null)
+                throw new InvalidOperationException("Could not deserialize the selected Texture2D.");
             ForceTextureByteArrayFields(baseField);
 
             string currentName = baseField["m_Name"].AsString;
@@ -386,6 +391,21 @@ namespace AssetStudioGUI
             {
                 manager.UnloadAll();
             }
+        }
+
+        private static void ForceTextureByteArrayTemplate(AssetTypeTemplateField textureTemplate)
+        {
+            AssetTypeTemplateField imageData = textureTemplate.Children?
+                .FirstOrDefault(f => f.Name == "image data");
+            if (imageData != null)
+                imageData.ValueType = AssetValueType.ByteArray;
+
+            AssetTypeTemplateField platformBlob = textureTemplate.Children?
+                .FirstOrDefault(f => f.Name == "m_PlatformBlob");
+            AssetTypeTemplateField platformBlobArray = platformBlob?.Children?
+                .FirstOrDefault(f => f.Name == "Array");
+            if (platformBlobArray != null)
+                platformBlobArray.ValueType = AssetValueType.ByteArray;
         }
 
         private static void ForceTextureByteArrayFields(AssetTypeValueField baseField)
