@@ -284,6 +284,80 @@ namespace AssetStudioGUI
             };
         }
 
+        public static (byte[] data, int width, int height) LoadSavedTexturePreview(string outputPath, long pathId, string assetName)
+        {
+            if (string.IsNullOrWhiteSpace(outputPath) || !File.Exists(outputPath))
+                throw new FileNotFoundException("The saved Unity file could not be found for preview.", outputPath);
+
+            var manager = new ATAssetsManager();
+            try
+            {
+                TextureFile texture = null;
+                AssetsFileInstance targetFile = null;
+
+                if (IsUnityBundle(outputPath))
+                {
+                    var bundle = manager.LoadBundleFile(outputPath, true);
+                    if (bundle == null || bundle.file == null)
+                        throw new InvalidOperationException("The saved Unity bundle could not be opened for preview.");
+
+                    foreach (var directoryInfo in bundle.file.BlockAndDirInfo.DirectoryInfos)
+                    {
+                        if (!directoryInfo.IsSerialized) continue;
+                        var fileInst = manager.LoadAssetsFileFromBundle(bundle, directoryInfo.Name, false);
+                        if (fileInst == null) continue;
+                        var info = fileInst.file.GetAssetInfo(pathId);
+                        if (info == null || info.GetTypeId(fileInst.file) != (int)AssetClassID.Texture2D) continue;
+
+                        EnsureClassDatabase(manager, fileInst);
+                        var field = manager.GetBaseField(fileInst, info);
+                        string currentName = field["m_Name"].AsString;
+                        if (!string.IsNullOrEmpty(assetName) && !string.Equals(currentName, assetName, StringComparison.Ordinal)) continue;
+
+                        texture = TextureFile.ReadTextureFile(field);
+                        targetFile = fileInst;
+                        break;
+                    }
+                }
+                else
+                {
+                    targetFile = manager.LoadAssetsFile(outputPath, false);
+                    if (targetFile == null)
+                        throw new InvalidOperationException("The saved assets file could not be opened for preview.");
+
+                    EnsureClassDatabase(manager, targetFile);
+                    var info = targetFile.file.GetAssetInfo(pathId);
+                    if (info != null && info.GetTypeId(targetFile.file) == (int)AssetClassID.Texture2D)
+                    {
+                        var field = manager.GetBaseField(targetFile, info);
+                        string currentName = field["m_Name"].AsString;
+                        if (string.IsNullOrEmpty(assetName) || string.Equals(currentName, assetName, StringComparison.Ordinal))
+                            texture = TextureFile.ReadTextureFile(field);
+                    }
+                }
+
+                if (texture == null)
+                    throw new InvalidOperationException("The saved Texture2D could not be found for preview.");
+
+                byte[] encodedData = texture.pictureData;
+                if ((encodedData == null || encodedData.Length == 0) && targetFile != null)
+                    encodedData = texture.FillPictureData(targetFile);
+
+                if (encodedData == null || encodedData.Length == 0)
+                    throw new InvalidOperationException("The saved Texture2D has no embedded image data to preview.");
+
+                byte[] decoded = texture.DecodeTextureRaw(encodedData, true);
+                if (decoded == null || decoded.Length < texture.m_Width * texture.m_Height * 4)
+                    throw new InvalidOperationException("The saved Texture2D image data could not be decoded for preview.");
+
+                return (decoded, texture.m_Width, texture.m_Height);
+            }
+            finally
+            {
+                manager.UnloadAll();
+            }
+        }
+
         private static void VerifyOutput(string outputPath, long pathId, string assetName, JuanchoReplacementResult expected)
         {
             var manager = new ATAssetsManager();
