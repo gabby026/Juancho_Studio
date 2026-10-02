@@ -96,7 +96,7 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "                    if (settingsDialog.ShowDialog(this) != DialogResult.OK) return;" + $nl +
 "                    settings = settingsDialog.Settings;" + $nl +
 "                }" + $nl + $nl +
-""                string sourcePath = string.IsNullOrWhiteSpace(selectedAsset.SourceFile.originalPath) ? selectedAsset.SourceFile.fullName : selectedAsset.SourceFile.originalPath;" + $nl +
+"                string sourcePath = string.IsNullOrWhiteSpace(selectedAsset.SourceFile.originalPath) ? selectedAsset.SourceFile.fullName : selectedAsset.SourceFile.originalPath;" + $nl +
 "                if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))" + $nl +
 "                {" + $nl +
 "                    MessageBox.Show(this, ""The opened Unity file could not be found on disk."", ""Juancho"", MessageBoxButtons.OK, MessageBoxIcon.Error);" + $nl +
