@@ -87,7 +87,7 @@ jobs:
           New-Item -ItemType Directory -Force "$env:GITHUB_WORKSPACE\publish\x64" | Out-Null
           if (-not (Test-Path ".\Texture2DDecoderNative\bin\x64\Release\Texture2DDecoderNative.dll")) { throw "Texture2DDecoderNative.dll was not built." }
           Copy-Item ".\Texture2DDecoderNative\bin\x64\Release\Texture2DDecoderNative.dll" "$env:GITHUB_WORKSPACE\publish\x64\Texture2DDecoderNative.dll" -Force
-          $encoderDir = "$env:GITHUB_WORKSPACE\AssetsToolsNative\out\build\x64-release"
+          $encoderDir = "$env:GITHUB_WORKSPACE\AssetsToolsNative\out\build\x64-release\TextureEncoder"
           if (-not (Test-Path "$encoderDir\textureencoder.dll")) { throw "textureencoder.dll was not built." }
           if (-not (Test-Path "$encoderDir\cuttlefish.dll")) { throw "cuttlefish.dll was not built." }
           Copy-Item "$encoderDir\textureencoder.dll" "$env:GITHUB_WORKSPACE\publish\textureencoder.dll" -Force
