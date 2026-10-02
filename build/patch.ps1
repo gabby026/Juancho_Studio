@@ -137,7 +137,7 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "                    StatusStripUpdate(""Juancho: Texture2D replacement finished. Reloading..."");" + $nl +
 "                    assetsManager.SpecifyUnityVersion = specifyUnityVersion.Text;" + $nl +
 "                    await Task.Run(() => assetsManager.LoadFiles(reloadPaths.Length > 0 ? reloadPaths : new[] { sourcePath }));" + $nl +
-"                    BuildAssetStructures();" + $nl + $nl +
+"                    await BuildAssetStructuresAndSelectAsync(selectedAsset.m_PathID, selectedAsset.Text);" + $nl + $nl +
 "                    string actual = $""{result.Width} × {result.Height}, {(AssetsTools.NET.Texture.TextureFormat)result.Format}, {result.MipCount} mip(s)"";" + $nl +
 "                    MessageBox.Show(this," + $nl +
 "                        ""Texture2D replaced and verified successfully in the opened Unity file."" + Environment.NewLine + Environment.NewLine +" + $nl +
@@ -152,7 +152,7 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "                    {" + $nl +
 "                        assetsManager.SpecifyUnityVersion = specifyUnityVersion.Text;" + $nl +
 "                        await Task.Run(() => assetsManager.LoadFiles(reloadPaths.Length > 0 ? reloadPaths : new[] { sourcePath }));" + $nl +
-"                        BuildAssetStructures();" + $nl +
+"                        await BuildAssetStructuresAndSelectAsync(selectedAsset.m_PathID, selectedAsset.Text);" + $nl +
 "                    }" + $nl +
 "                    catch" + $nl +
 "                    {" + $nl +
@@ -169,6 +169,84 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "            }" + $nl +
 "        }" + $nl + $nl
 
+    if ($formText -notmatch 'BuildAssetStructuresAndSelectAsync') {
+        $helper =
+"        private async Task BuildAssetStructuresAndSelectAsync(long targetPathId, string targetName)" + $nl +
+"        {" + $nl +
+"            if (assetsManager.assetsFileList.Count == 0)" + $nl +
+"            {" + $nl +
+"                StatusStripUpdate(""No Unity file can be loaded."");" + $nl +
+"                return;" + $nl +
+"            }" + $nl + $nl +
+"            (var productName, var treeNodeCollection) = await Task.Run(() => BuildAssetData());" + $nl +
+"            var typeMap = await Task.Run(() => BuildClassStructure());" + $nl + $nl +
+"            if (!string.IsNullOrEmpty(productName))" + $nl +
+"                Text = $""AssetStudioGUI v{Application.ProductVersion} - {productName} - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}"";" + $nl +
+"            else" + $nl +
+"                Text = $""AssetStudioGUI v{Application.ProductVersion} - no productName - {assetsManager.assetsFileList[0].unityVersion} - {assetsManager.assetsFileList[0].m_TargetPlatform}"";" + $nl + $nl +
+"            assetListView.VirtualListSize = visibleAssets.Count;" + $nl + $nl +
+"            sceneTreeView.BeginUpdate();" + $nl +
+"            sceneTreeView.Nodes.AddRange(treeNodeCollection.ToArray());" + $nl +
+"            sceneTreeView.EndUpdate();" + $nl +
+"            treeNodeCollection.Clear();" + $nl + $nl +
+"            classesListView.BeginUpdate();" + $nl +
+"            foreach (var version in typeMap)" + $nl +
+"            {" + $nl +
+"                var versionGroup = new ListViewGroup(version.Key);" + $nl +
+"                classesListView.Groups.Add(versionGroup);" + $nl +
+"                foreach (var uclass in version.Value)" + $nl +
+"                {" + $nl +
+"                    uclass.Value.Group = versionGroup;" + $nl +
+"                    classesListView.Items.Add(uclass.Value);" + $nl +
+"                }" + $nl +
+"            }" + $nl +
+"            typeMap.Clear();" + $nl +
+"            classesListView.EndUpdate();" + $nl + $nl +
+"            var types = exportableAssets.Select(x => x.Type).Distinct().OrderBy(x => x.ToString()).ToArray();" + $nl +
+"            foreach (var type in types)" + $nl +
+"            {" + $nl +
+"                var typeItem = new ToolStripMenuItem" + $nl +
+"                {" + $nl +
+"                    CheckOnClick = true," + $nl +
+"                    Name = type.ToString()," + $nl +
+"                    Size = new Size(180, 22)," + $nl +
+"                    Text = type.ToString()" + $nl +
+"                };" + $nl +
+"                typeItem.Click += typeToolStripMenuItem_Click;" + $nl +
+"                filterTypeToolStripMenuItem.DropDownItems.Add(typeItem);" + $nl +
+"            }" + $nl +
+"            allToolStripMenuItem.Checked = true;" + $nl + $nl +
+"            FilterAssetList();" + $nl + $nl +
+"            int targetIndex = -1;" + $nl +
+"            for (int i = 0; i < visibleAssets.Count; i++)" + $nl +
+"            {" + $nl +
+"                var item = visibleAssets[i];" + $nl +
+"                if (item.Type == ClassIDType.Texture2D && item.m_PathID == targetPathId &&" + $nl +
+"                    (string.IsNullOrEmpty(targetName) || string.Equals(item.Text, targetName, StringComparison.Ordinal)))" + $nl +
+"                {" + $nl +
+"                    targetIndex = i;" + $nl +
+"                    break;" + $nl +
+"                }" + $nl +
+"            }" + $nl + $nl +
+"            if (targetIndex >= 0)" + $nl +
+"            {" + $nl +
+"                assetListView.SelectedIndices.Clear();" + $nl +
+"                assetListView.SelectedIndices.Add(targetIndex);" + $nl +
+"                assetListView.EnsureVisible(targetIndex);" + $nl +
+"                lastSelectedItem = visibleAssets[targetIndex];" + $nl +
+"                if (enablePreview.Checked)" + $nl +
+"                    PreviewAsset(lastSelectedItem);" + $nl +
+"                if (displayInfo.Checked && lastSelectedItem.InfoText != null)" + $nl +
+"                {" + $nl +
+"                    assetInfoLabel.Text = lastSelectedItem.InfoText;" + $nl +
+"                    assetInfoLabel.Visible = true;" + $nl +
+"                }" + $nl +
+"            }" + $nl + $nl +
+"            var log = $""Finished loading {assetsManager.assetsFileList.Count} files with {assetListView.Items.Count} exportable assets"";" + $nl +
+"            StatusStripUpdate(log);" + $nl +
+"        }" + $nl + $nl;
+        $formText = $formText.Replace($marker, $helper + $marker)
+    }
     $marker = "        private void showExpOpt_Click(object sender, EventArgs e)"
     if (-not $formText.Contains($marker)) { throw "Could not find form insertion marker." }
     $formText = $formText.Replace($marker, $handler + $marker)
