@@ -157,7 +157,22 @@ namespace AssetStudioGUI
                 int directoryIndex = bundle.file.GetFileIndex(targetFile.name);
                 if (directoryIndex < 0) throw new InvalidOperationException($"Bundle entry '{targetFile.name}' was not found.");
 
-                bundle.file.BlockAndDirInfo.DirectoryInfos[directoryIndex].SetNewData(targetFile.file);
+                // Materialize the modified inner serialized file first. This avoids relying on a live
+                // bundle-backed reader when the outer bundle is rewritten.
+                byte[] modifiedInnerAssets;
+                using (var innerStream = new MemoryStream())
+                {
+                    using (var innerWriter = new AssetsFileWriter(innerStream))
+                    {
+                        targetFile.file.Write(innerWriter);
+                    }
+                    modifiedInnerAssets = innerStream.ToArray();
+                }
+
+                if (modifiedInnerAssets.Length == 0)
+                    throw new IOException($"Modified inner assets file '{targetFile.name}' serialized to zero bytes.");
+
+                bundle.file.BlockAndDirInfo.DirectoryInfos[directoryIndex].SetNewData(modifiedInnerAssets);
 
                 using var writer = new AssetsFileWriter(outputPath);
                 if (bundle.originalCompression == AssetBundleCompressionType.None)
