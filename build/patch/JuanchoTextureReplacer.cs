@@ -54,8 +54,12 @@ namespace AssetStudioGUI
                 VerifyOutput(tempPath, pathId, assetName, result);
 
                 // The GUI clears AssetStudio's current file manager before calling this method.
-                // File.Replace performs the final commit directly over the opened Unity file.
-                File.Replace(tempPath, sourcePath, backupPath, true);
+                // Use an explicit backup + overwrite/move sequence instead of File.Replace.
+                // This is more reliable for files stored under OneDrive/cloud-synced folders.
+                File.Copy(sourcePath, backupPath, true);
+
+                File.Delete(sourcePath);
+                File.Move(tempPath, sourcePath);
 
                 try
                 {
@@ -63,8 +67,10 @@ namespace AssetStudioGUI
                 }
                 catch
                 {
+                    if (File.Exists(sourcePath))
+                        File.Delete(sourcePath);
                     if (File.Exists(backupPath))
-                        File.Copy(backupPath, sourcePath, true);
+                        File.Move(backupPath, sourcePath, true);
                     throw;
                 }
 
