@@ -257,61 +257,32 @@ if ($formText -notmatch 'replaceSelectedTextureToolStripMenuItem_Click') {
 "        {" + $nl +
 "            try" + $nl +
 "            {" + $nl +
-"                var previewData = await Task.Run(() => LoadJuanchoSavedTexturePreviewData(sourcePath, targetPathId, targetName, unityVersion));" + $nl +
+"                var previewData = await Task.Run(() => JuanchoTextureReplacer.LoadSavedTexturePreview(sourcePath, targetPathId, targetName));" + $nl +
 "                if (previewData.data == null || previewData.data.Length == 0)" + $nl +
-"                {" + $nl +
-"                    StatusStripUpdate(""Juancho: saved Texture2D preview data was empty; keeping normal preview."");" + $nl +
-"                    return;" + $nl +
-"                }" + $nl + $nl +
+"                    throw new InvalidOperationException(""The newly saved Texture2D decoded to empty preview data."");" + $nl + $nl +
 "                imageTexture?.Dispose();" + $nl +
 "                imageTexture = new DirectBitmap(previewData.data, previewData.width, previewData.height);" + $nl +
 "                previewPanel.BackgroundImage = imageTexture.Bitmap;" + $nl +
 "                previewPanel.BackgroundImageLayout = imageTexture.Width > previewPanel.Width || imageTexture.Height > previewPanel.Height" + $nl +
 "                    ? ImageLayout.Zoom" + $nl +
 "                    : ImageLayout.Center;" + $nl +
-"                StatusStripUpdate(""Juancho: preview refreshed from the newly saved Texture2D on disk."");" + $nl +
+"                if (lastSelectedItem != null)" + $nl +
+"                {" + $nl +
+"                    lastSelectedItem.InfoText = $""Width: {previewData.width}"" + Environment.NewLine + ""Height: {previewData.height}"" + Environment.NewLine + ""Saved Texture2D preview loaded directly from disk"";" + $nl +
+"                    if (displayInfo.Checked)" + $nl +
+"                    {" + $nl +
+"                        assetInfoLabel.Text = lastSelectedItem.InfoText;" + $nl +
+"                        assetInfoLabel.Visible = true;" + $nl +
+"                    }" + $nl +
+"                }" + $nl +
+"                StatusStripUpdate(""Juancho: preview refreshed from the newly saved Texture2D bytes on disk."");" + $nl +
 "            }" + $nl +
 "            catch (Exception ex)" + $nl +
 "            {" + $nl +
 "                StatusStripUpdate(""Juancho: saved Texture2D preview refresh failed: "" + ex.Message);" + $nl +
-"            }" + $nl +
-"        }" + $nl + $nl +
-"        private static (byte[] data, int width, int height) LoadJuanchoSavedTexturePreviewData(string sourcePath, long targetPathId, string targetName, string unityVersion)" + $nl +
-"        {" + $nl +
-"            var manager = new AssetStudio.AssetsManager();" + $nl +
-"            try" + $nl +
-"            {" + $nl +
-"                manager.SpecifyUnityVersion = unityVersion;" + $nl +
-"                manager.LoadFiles(sourcePath);" + $nl +
-"                Texture2D texture = null;" + $nl +
-"                foreach (var assetsFile in manager.assetsFileList)" + $nl +
-"                {" + $nl +
-"                    foreach (var obj in assetsFile.Objects)" + $nl +
-"                    {" + $nl +
-"                        if (obj is Texture2D candidate && candidate.m_PathID == targetPathId &&" + $nl +
-"                            (string.IsNullOrEmpty(targetName) || string.Equals(candidate.m_Name, targetName, StringComparison.Ordinal)))" + $nl +
-"                        {" + $nl +
-"                            texture = candidate;" + $nl +
-"                            break;" + $nl +
-"                        }" + $nl +
-"                    }" + $nl +
-"                    if (texture != null) break;" + $nl +
-"                }" + $nl + $nl +
-"                if (texture == null)" + $nl +
-"                    throw new InvalidOperationException(""The freshly saved Texture2D could not be found for preview."");" + $nl + $nl +
-"                using (var image = texture.ConvertToImage(true))" + $nl +
-"                {" + $nl +
-"                    if (image == null)" + $nl +
-"                        throw new InvalidOperationException(""The freshly saved Texture2D could not be decoded for preview."");" + $nl +
-"                    return (image.ConvertToBytes(), texture.m_Width, texture.m_Height);" + $nl +
-"                }" + $nl +
-"            }" + $nl +
-"            finally" + $nl +
-"            {" + $nl +
-"                manager.Clear();" + $nl +
+"                throw;" + $nl +
 "            }" + $nl +
 "        }" + $nl + $nl;
-        if (-not $formText.Contains($marker)) { throw "Could not find preview helper insertion marker." }
         $formText = $formText.Replace($marker, $previewHelper + $handler + $marker)
     }
     Set-Content $form $formText -Encoding UTF8
