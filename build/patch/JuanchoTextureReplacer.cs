@@ -7,7 +7,6 @@ using StbImageSharp;
 using System;
 using System.IO;
 using System.Linq;
-using System.Text;
 using ATTextureFormat = AssetsTools.NET.Texture.TextureFormat;
 using StbColorComponents = StbImageSharp.ColorComponents;
 
@@ -197,6 +196,10 @@ namespace AssetStudioGUI
             if (!string.IsNullOrEmpty(assetName) && !string.Equals(currentName, assetName, StringComparison.Ordinal))
                 throw new InvalidOperationException($"The selected Texture2D resolved to '{currentName}'.");
 
+            // Edit the serialized Texture2D itself, following UABEA's approach:
+            // keep the existing metadata unless the user explicitly changes it,
+            // replace image data through the TextureFile encoder, then serialize
+            // the complete Texture2D as the asset replacer.
             var texture = TextureFile.ReadTextureFile(baseField);
             texture.m_TextureFormat = settings.Format;
 
@@ -208,9 +211,11 @@ namespace AssetStudioGUI
             texture.m_TextureSettings.m_WrapV = settings.WrapMode;
             texture.m_TextureSettings.m_WrapW = settings.WrapMode;
 
-            texture.m_PlatformBlob = Array.Empty<byte>();
-            texture.m_StreamingMipmaps = false;
-            texture.m_StreamingMipmapsPriority = 0;
+            // Do NOT blindly clear platform blob or streaming mipmap metadata.
+            // UABEA preserves these fields; TextureFile.EncodeTextureRaw only
+            // removes m_StreamData because the replacement is embedded locally.
+            if (fileInst.file.Metadata.TargetPlatform == 38 && texture.m_PlatformBlob != null && texture.m_PlatformBlob.Length > 0)
+                texture.swizzleType = SwizzleType.Switch;
 
             byte[] rgbaData;
             int sourceWidth;
@@ -231,30 +236,43 @@ namespace AssetStudioGUI
                 settings.Width,
                 settings.Height);
 
-            // StbImageSharp provides RGBA32. The channel choice controls the
-            // byte order supplied to the encoder for formats where that distinction applies.
+            // TextureFile.EncodeTextureRaw handles Unity's expected vertical orientation.
+            // Supply the raw bytes in the order selected by the dialog.
             if (settings.UseBgra)
                 SwapRedBlueInplace(resizedData);
 
             int mipCount = settings.GenerateMipMaps ? settings.MipCount : 1;
-            bool useBgraInput = settings.UseBgra;
-
             texture.EncodeTextureRaw(
                 resizedData,
                 settings.Width,
                 settings.Height,
                 mipCount,
-                useBgraInput);
+                3,
+                settings.UseBgra);
 
             if (settings.GenerateMipMaps && settings.MipCount > 1 && texture.m_MipCount < settings.MipCount)
                 throw new InvalidOperationException(
                     $"The selected encoder generated only {texture.m_MipCount} mip level(s), but {settings.MipCount} were requested. " +
                     "The bundled native encoder is required for multi-mip output.");
 
-            texture.m_MipCount = settings.GenerateMipMaps ? texture.m_MipCount : 1;
-            texture.m_MipMap = settings.GenerateMipMaps;
+            if (!settings.GenerateMipMaps)
+            {
+                texture.m_MipCount = 1;
+                texture.m_MipMap = false;
+            }
+            else
+            {
+                texture.m_MipMap = true;
+            }
 
+            // EncodeTextureRaw() has already moved the replacement into embedded
+            // image data and cleared m_StreamData, while all other texture metadata
+            // (including platform blob and streaming settings) remains preserved.
             texture.WriteTo(baseField);
+
+            // Equivalent to UABEA's workspace.AddReplacer(...): SetNewData
+            // stores a complete serialized Texture2D replacement with a previewable
+            // memory buffer for AssetsTools.NET's asset system.
             info.SetNewData(baseField);
 
             return new JuanchoReplacementResult
