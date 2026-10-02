@@ -7,6 +7,7 @@ using StbImageSharp;
 using System;
 using System.IO;
 using System.Linq;
+using System.Text;
 using ATTextureFormat = AssetsTools.NET.Texture.TextureFormat;
 using StbColorComponents = StbImageSharp.ColorComponents;
 
@@ -247,7 +248,6 @@ namespace AssetStudioGUI
                 settings.Width,
                 settings.Height,
                 mipCount,
-                3,
                 settings.UseBgra);
 
             if (settings.GenerateMipMaps && settings.MipCount > 1 && texture.m_MipCount < settings.MipCount)
