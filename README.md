@@ -4,9 +4,9 @@ Juancho-modified AssetStudio build project.
 
 ## Current feature
 
-Adds **Juancho → Replace Selected Texture2D** to AssetStudio. The flow lets you choose an image, confirm Texture2D dimensions/format/filter/wrap/mipmap/channel settings, then save a new Unity asset or bundle.
+Adds **Juancho → Replace Selected Texture2D** to AssetStudio. then save directly back into the currently opened Unity asset or bundle.
 
-The replacement code validates settings, uses the native texture encoder for compressed formats, includes external TypeTree support, writes atomically through a temporary file, and verifies the saved Texture2D before committing the final output.
+The replacement code validates settings, uses the native texture encoder for compressed formats, includes external TypeTree support, writes through a temporary file, atomically replaces the currently opened Unity file, keeps a `.bak` backup of the previous file, and verifies the Texture2D after the in-place commit.
 
 ## Build
 
