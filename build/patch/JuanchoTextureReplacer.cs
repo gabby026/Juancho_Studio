@@ -8,6 +8,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Security.Cryptography;
 using ATTextureFormat = AssetsTools.NET.Texture.TextureFormat;
 using StbColorComponents = StbImageSharp.ColorComponents;
 
@@ -19,6 +20,7 @@ namespace AssetStudioGUI
         public int Height { get; set; }
         public int Format { get; set; }
         public int MipCount { get; set; }
+        public string PictureDataSha256 { get; set; }
     }
 
     internal static class JuanchoTextureReplacer
@@ -285,6 +287,11 @@ namespace AssetStudioGUI
             // (including platform blob and streaming settings) remains preserved.
             texture.WriteTo(baseField);
 
+            if (texture.pictureData == null || texture.pictureData.Length == 0)
+                throw new InvalidOperationException("The replacement encoder produced no embedded Texture2D image bytes.");
+
+            string pictureDataSha256 = Convert.ToHexString(SHA256.HashData(texture.pictureData));
+
             // Equivalent to UABEA's workspace.AddReplacer(...): SetNewData
             // stores a complete serialized Texture2D replacement with a previewable
             // memory buffer for AssetsTools.NET's asset system.
@@ -295,7 +302,8 @@ namespace AssetStudioGUI
                 Width = texture.m_Width,
                 Height = texture.m_Height,
                 Format = texture.m_TextureFormat,
-                MipCount = texture.m_MipCount
+                MipCount = texture.m_MipCount,
+                PictureDataSha256 = pictureDataSha256
             };
         }
 
@@ -431,8 +439,12 @@ namespace AssetStudioGUI
                 if (texture.m_MipCount != expected.MipCount)
                     throw new InvalidOperationException($"Verification mismatch. Saved mip count is {texture.m_MipCount}, expected {expected.MipCount}.");
 
-                if ((texture.pictureData == null || texture.pictureData.Length == 0) && string.IsNullOrEmpty(texture.m_StreamData.path))
+                if (texture.pictureData == null || texture.pictureData.Length == 0)
                     throw new InvalidOperationException("Verification failed because the saved Texture2D contains no embedded image data.");
+
+                string savedHash = Convert.ToHexString(SHA256.HashData(texture.pictureData));
+                if (!string.Equals(savedHash, expected.PictureDataSha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"Verification mismatch. The saved Texture2D image bytes do not match the bytes encoded during replacement. Expected {expected.PictureDataSha256}, saved {savedHash}.");
             }
             finally
             {
