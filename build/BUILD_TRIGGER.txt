@@ -1,1 +1,2 @@
 Juancho Studio permanent build source. Texture2D replacement settings, native encoder, TypeTree, atomic save, and verification.
+In-place save build verification 2026-10-02
