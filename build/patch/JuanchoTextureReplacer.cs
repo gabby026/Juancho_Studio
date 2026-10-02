@@ -23,45 +23,49 @@ namespace AssetStudioGUI
 
     internal static class JuanchoTextureReplacer
     {
-        public static JuanchoReplacementResult ReplaceTexture(AssetItem selectedAsset, string imagePath, string outputPath, JuanchoTextureSettings settings)
+        public static JuanchoReplacementResult ReplaceTexture(string sourcePath, long pathId, string assetName, string imagePath, JuanchoTextureSettings settings)
         {
-            if (selectedAsset == null) throw new ArgumentNullException(nameof(selectedAsset));
-            if (selectedAsset.Type != ClassIDType.Texture2D) throw new InvalidOperationException("The selected asset is not a Texture2D.");
+            if (string.IsNullOrWhiteSpace(sourcePath)) throw new ArgumentException("The opened Unity file path is required.", nameof(sourcePath));
             if (string.IsNullOrWhiteSpace(imagePath) || !File.Exists(imagePath)) throw new FileNotFoundException("Replacement image was not found.", imagePath);
-            if (string.IsNullOrWhiteSpace(outputPath)) throw new ArgumentException("Output path is required.", nameof(outputPath));
             if (settings == null) throw new ArgumentNullException(nameof(settings));
 
             ValidateSettings(settings);
 
-            string sourcePath = string.IsNullOrWhiteSpace(selectedAsset.SourceFile.originalPath)
-                ? selectedAsset.SourceFile.fullName
-                : selectedAsset.SourceFile.originalPath;
-            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
-                throw new FileNotFoundException("The original Unity file could not be found.", sourcePath);
-
             sourcePath = Path.GetFullPath(sourcePath);
-            outputPath = Path.GetFullPath(outputPath);
-            if (string.Equals(sourcePath, outputPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("Save the modified file to a new path.");
+            if (!File.Exists(sourcePath))
+                throw new FileNotFoundException("The opened Unity file could not be found.", sourcePath);
 
-            string outputDirectory = Path.GetDirectoryName(outputPath);
-            if (!string.IsNullOrEmpty(outputDirectory)) Directory.CreateDirectory(outputDirectory);
-
-            string tempPath = outputPath + ".juancho.tmp";
-            if (File.Exists(tempPath)) File.Delete(tempPath);
+            string tempPath = sourcePath + ".juancho.tmp";
+            string backupPath = sourcePath + ".bak";
+            if (File.Exists(tempPath))
+                File.Delete(tempPath);
 
             try
             {
                 JuanchoReplacementResult result = IsUnityBundle(sourcePath)
-                    ? ReplaceInBundle(sourcePath, selectedAsset.m_PathID, selectedAsset.Text, imagePath, tempPath, settings)
-                    : ReplaceInAssetsFile(sourcePath, selectedAsset.m_PathID, selectedAsset.Text, imagePath, tempPath, settings);
+                    ? ReplaceInBundle(sourcePath, pathId, assetName, imagePath, tempPath, settings)
+                    : ReplaceInAssetsFile(sourcePath, pathId, assetName, imagePath, tempPath, settings);
 
                 if (!File.Exists(tempPath) || new FileInfo(tempPath).Length == 0)
                     throw new IOException("The replacement produced an empty output file.");
 
-                VerifyOutput(tempPath, selectedAsset.m_PathID, selectedAsset.Text, result);
+                VerifyOutput(tempPath, pathId, assetName, result);
 
-                File.Move(tempPath, outputPath, true);
+                // The GUI clears AssetStudio's current file manager before calling this method.
+                // File.Replace performs the final commit directly over the opened Unity file.
+                File.Replace(tempPath, sourcePath, backupPath, true);
+
+                try
+                {
+                    VerifyOutput(sourcePath, pathId, assetName, result);
+                }
+                catch
+                {
+                    if (File.Exists(backupPath))
+                        File.Copy(backupPath, sourcePath, true);
+                    throw;
+                }
+
                 return result;
             }
             finally
