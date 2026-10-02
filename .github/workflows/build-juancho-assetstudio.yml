@@ -110,7 +110,7 @@ jobs:
           5. Confirm the Texture2D settings.
           6. Save the modified Unity file.
           
-          The original source file is not overwritten.
+          Save writes back into the currently opened Unity file. A .bak backup of the pre-save file is kept beside it.
           The package includes the native texture encoder and classdata.tpk for files that use external TypeTrees.
           '@
           Set-Content "$env:GITHUB_WORKSPACE\publish\README-Juancho.txt" $readme -Encoding UTF8
