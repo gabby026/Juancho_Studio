@@ -32,7 +32,7 @@ if ($formText -notmatch [regex]::Escape($marker)) {
             menuStrip1.Items.Add(visualLabMenuItem);
             // JUANCHO_VISUAL_LAB_MENU_END
 '@
-    $formText = $formText.Replace($needle, $replacement.TrimEnd())
+    $formText = $formText.Replace($needle, $replacement.TrimEnd() + [Environment]::NewLine)
     Set-Content -Path $formPath -Value $formText -Encoding UTF8
 }
 
