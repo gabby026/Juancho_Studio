@@ -10,7 +10,10 @@ Extend the existing Juancho Studio / AssetStudio build overlay into a Windows de
 - The repository is an overlay/build project, not a full vendored copy of AssetStudio. Its GitHub Actions build clones upstream `perfare/AssetStudio`, applies `build/patch.ps1`, builds native texture helpers, and publishes a Windows x64 ZIP.
 - Existing feature: `Juancho → Replace Selected Texture2D`, which edits the opened asset file and keeps a backup. Visual Lab must be a separate read-only analysis path; do not route its scan or preview code through this write-back feature.
 - The build workflow currently targets .NET 8 Windows and runs on `windows-latest`.
-- The repository did not contain a real full MLBB hero/skill test package at this audit. Runtime compatibility cannot be asserted until a sample package with its related bundles is tested.
+- A Nana 10th Anniversary ZIP exists in the user's local file library and contains 58 `.unity3d` bundles. It is an integration candidate but has not yet been run through the packaged Windows Visual Lab runtime.
+- The SkinForgeID review is recorded in `docs/REFERENCE_PROJECT_REVIEW.md`. No reference-project code, workspace, or assets were copied into Juancho.
+
+## Architecture decision
 
 ## Architecture decision
 
@@ -32,13 +35,15 @@ Important limitation: folder grouping is a heuristic only; it is not a dependenc
 
 ### Layer B — Serialized Unity asset index
 
-Next implementation milestone:
-1. Load each supported bundle/file through the existing AssetStudio/AssetsTools reader.
-2. Record each serialized object's source file, path ID, class/type, name, and parse status.
-3. Resolve PPtr references across all selected bundles using file identity plus path ID.
-4. Keep duplicate display names distinct by stable source identity.
-5. Flag unresolved pointers and unsupported serialized types.
-6. Cache the index in a sidecar file with a versioned schema; never write it back into a source bundle.
+Foundation implementation now added:
+1. Load selected bundle/file inputs through a separate `AssetStudio.AssetsManager` instance, leaving the main AssetStudio GUI state separate.
+2. Record parsed serialized objects by file identity, Path ID, class/type, best-effort object name, Unity version, platform, and serialized size.
+3. Walk serialized object fields to find `PPtr<T>` references and resolve them against the selected loaded package where possible.
+4. Show object references and unresolved counts in the new Serialized Objects tab.
+5. Keep duplicate display names distinct through file identity plus Path ID.
+6. Mark pointers that cannot be resolved within the loaded set as unresolved instead of silently substituting another object.
+
+Still required: validate the index against the local Nana multi-bundle fixture, handle basename collisions more robustly, test nested asset wrappers and unusual type trees, and persist a versioned index sidecar. A compile or a resolved PPtr is not proof that the target can be rendered.
 
 ### Layer C — Reconstruction adapter
 
@@ -114,8 +119,8 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 ### M0 — Baseline and smoke tests
 - [x] Confirm repo architecture and build workflow.
 - [x] Add a testable inventory / timeline core.
-- [x] Add source-protection tests.
-- [ ] Run the Windows CI build and resolve all failures.
+- [x] Add source-protection tests; the GitHub Actions smoke-test step passed on the foundation commit.
+- [ ] Complete the latest Windows CI build after serialized-object UI/indexer integration.
 
 ### M1 — Package inventory
 - [x] Folder scan and multi-file scan.
@@ -125,10 +130,11 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [ ] Improve scan memory/performance on very large package folders.
 
 ### M2 — Unity serialized object catalog
-- [ ] AssetStudio/AssetsTools-backed object index.
-- [ ] Cross-bundle references resolved by identity/path ID.
-- [ ] Accurate asset type and object names.
-- [ ] Dependency inspector backed by serialized references, not folder guesses.
+- [x] AssetStudio-backed object index and Serialized Objects UI added.
+- [x] Serialized class/type, name, source file, Path ID, Unity version, and platform shown where available.
+- [x] PPtr dependencies enumerated from serialized fields and resolution status displayed.
+- [x] Dependency inspector is backed by parsed object references rather than folder-name heuristics.
+- [ ] Run against the Nana package and verify realistic cross-bundle resolution, duplicate names, and missing-reference diagnostics.
 
 ### M3 — First real 3D proof of concept
 - [ ] Render one real MLBB character model.
