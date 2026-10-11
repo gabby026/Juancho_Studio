@@ -419,6 +419,9 @@ namespace AssetStudioGUI
             SetScanning(true);
             _assetItems.Clear();
             _lastScan = null;
+            _lastUnityIndex = null;
+            _unityObjectItems.Clear();
+            _dependencyItems.Clear();
             _scanStatus.Text = "Discovering package files…";
             var progress = new Progress<VisualLabScanProgress>(p =>
             {
@@ -433,6 +436,7 @@ namespace AssetStudioGUI
                 RememberProtectedRoots(result.ProtectedSourceRoots);
                 foreach (var asset in result.Assets) _assetItems.Add(asset);
                 _exportReportButton.Enabled = result.Assets.Count > 0 || result.Diagnostics.Count > 0;
+                _analyzeObjectsButton.Enabled = result.Assets.Any(IsUnityInput);
                 _scanStatus.Text = string.Format(
                     "Indexed {0} files · {1} duplicate-content entries · {2} warnings · {3} · Source files were not modified.",
                     result.Assets.Count, result.DuplicateFileCount, result.Diagnostics.Count(x => x.Severity == "Warning"), FormatBytes(result.TotalBytes));
@@ -455,6 +459,100 @@ namespace AssetStudioGUI
             finally
             {
                 SetScanning(false);
+            }
+        }
+
+        private async Task AnalyzeUnityBundlesAsync()
+        {
+            if (_lastScan == null)
+            {
+                MessageBox.Show(this, "Scan a package folder or select bundle files first.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource"
+            };
+            var files = _lastScan.Assets
+                .Where(x => extensions.Contains(x.Extension) && File.Exists(x.FullPath))
+                .Select(x => x.FullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            if (files.Length == 0)
+            {
+                MessageBox.Show(this, "No Unity bundle or serialized asset files were found in this scan.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SetScanning(true);
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 24;
+            _statusLabel.Text = "Parsing Unity serialized objects…";
+            _detailLabel.Text = files.Length + " candidate files";
+            _unityObjectItems.Clear();
+            _dependencyItems.Clear();
+            _lastUnityIndex = null;
+
+            try
+            {
+                var result = await VisualLabUnityIndexer.AnalyzeFilesAsync(files);
+                _lastUnityIndex = result;
+                foreach (var item in result.Assets) _unityObjectItems.Add(item);
+                _objectStatus.Text = string.Format(
+                    "Loaded {0} serialized files · Indexed {1} objects · {2} references resolved · {3} unresolved references · {4} ms. Source bundles were opened read-only.",
+                    result.SerializedFileCount, result.Assets.Count, result.ResolvedDependencyCount,
+                    result.UnresolvedDependencyCount, result.DurationMilliseconds);
+
+                _statusLabel.Text = "Serialized object analysis complete";
+                _detailLabel.Text = result.UnresolvedDependencyCount + " unresolved references";
+                if (result.Diagnostics.Any(x => x.Severity == "Warning" || x.Severity == "Error"))
+                {
+                    var detail = string.Join(Environment.NewLine, result.Diagnostics
+                        .Where(x => x.Severity == "Warning" || x.Severity == "Error")
+                        .Select(x => x.Severity + ": " + x.Message)
+                        .Take(8));
+                    MessageBox.Show(this, detail, "Visual Lab package diagnostics", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                if (_unityObjectItems.Count > 0)
+                {
+                    _unityObjectGrid.ClearSelection();
+                    _unityObjectGrid.Rows[0].Selected = true;
+                    _unityObjectGrid.CurrentCell = _unityObjectGrid.Rows[0].Cells[0];
+                    RefreshDependenciesForSelectedObject();
+                }
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = "Serialized object analysis failed";
+                _objectStatus.Text = "Parsing did not complete. Source files were not modified. " + ex.Message;
+                MessageBox.Show(this, "Unity package analysis failed. The source bundles were not modified.\r\n\r\n" + ex.Message,
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _progressBar.Style = ProgressBarStyle.Blocks;
+                _progressBar.MarqueeAnimationSpeed = 0;
+                SetScanning(false);
+            }
+        }
+
+        private static bool IsUnityInput(VisualLabAssetFile file)
+        {
+            if (file == null) return false;
+            switch (file.Extension.ToLowerInvariant())
+            {
+                case ".unity3d":
+                case ".bundle":
+                case ".assets":
+                case ".asset":
+                case ".ab":
+                case ".ress":
+                case ".resource":
+                    return true;
+                default:
+                    return false;
             }
         }
 
