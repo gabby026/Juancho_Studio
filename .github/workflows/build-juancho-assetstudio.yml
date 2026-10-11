@@ -115,7 +115,8 @@ jobs:
           2. Scan a package folder or select multiple Unity bundles.
           3. Select "Analyze Unity Bundle Contents" to parse serialized Unity objects and inspect PPtr dependencies.
           4. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
-          5. Use Skill Timeline to author and save manual event timings.
+          5. Select an object with Unity class Mesh and click Preview Selected Mesh (static) to orbit, pan, zoom, and toggle wireframe for its geometry.
+          6. Use Skill Timeline to author and save manual event timings.
 
           Safety:
           - Visual Lab parses isolated temporary copies of selected Unity input files.
@@ -124,7 +125,8 @@ jobs:
           - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
           Current limitations:
-          - Live 3D scene reconstruction is not connected yet.
+          - The 3D viewport currently draws one serialized Mesh as static geometry; it does not yet assemble a complete hero/GameObject hierarchy or render recovered materials and textures.
+          - Skinned-mesh deformation and rig binding are not connected yet.
           - AnimationClip playback, Unity particle/trail runtime, shader reconstruction, and executing the skill timeline are not available in this foundation build.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
 
