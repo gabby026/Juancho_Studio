@@ -12,6 +12,7 @@ Current capabilities:
 - Parse selected Unity inputs using isolated temporary copies.
 - Inspect serialized object names, Unity classes, source file, Path ID, Unity version, platform, and object-reference counts.
 - Inspect resolved and unresolved PPtr dependencies across the selected package.
+- Inspect AnimationClip duration, sample rate, curve bindings/key counts, embedded events, and playback-readiness diagnostics.
 - Preview one static `Mesh` or combine an indexed `GameObject`'s available child `MeshFilter`/`SkinnedMeshRenderer` geometry in an interactive viewport with orbit, pan, zoom, reset, and wireframe controls.
 - Filter discovered objects by likely role: model geometry, animation, visual effects, material/texture, scene hierarchy, audio, or game-specific component. Role labels are classification hints; preview readiness is shown separately.
 - Save a scan report and author/save/reopen manually timed skill-sequence projects.
