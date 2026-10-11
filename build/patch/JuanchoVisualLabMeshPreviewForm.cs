@@ -70,8 +70,12 @@ namespace AssetStudioGUI
             tools.Items.Add(new ToolStripLabel("Left drag: rotate  ·  Right/middle drag: pan  ·  Wheel: zoom"));
 
             var statusStrip = new StatusStrip();
-            _status.Text = mesh.VertexCount.ToString("N0") + " vertices · " + mesh.TriangleCount.ToString("N0") + " triangles";
-            _help.Text = "Static geometry only — materials, textures, skeleton deformation, AnimationClips, and effects are not yet rendered";
+            var partCount = mesh.MeshPartCount > 0 ? mesh.MeshPartCount : 1;
+            _status.Text = mesh.VertexCount.ToString("N0") + " vertices · " + mesh.TriangleCount.ToString("N0") +
+                " triangles · " + partCount.ToString("N0") + " mesh part(s)";
+            _help.Text = string.IsNullOrWhiteSpace(mesh.PreviewNotes)
+                ? "Static geometry only — materials, textures, skeleton deformation, AnimationClips, and effects are not rendered"
+                : mesh.PreviewNotes;
             statusStrip.Items.Add(_status);
             statusStrip.Items.Add(new ToolStripStatusLabel { Spring = true });
             statusStrip.Items.Add(_help);
@@ -101,8 +105,11 @@ namespace AssetStudioGUI
                 InitializeOpenGl();
                 CreateBuffers();
                 _glReady = true;
-                _status.Text = _mesh.VertexCount.ToString("N0") + " vertices · " + _mesh.TriangleCount.ToString("N0") + " triangles";
-                _help.Text = "Source: " + System.IO.Path.GetFileName(_mesh.SourceBundlePath) + " · Path ID " + _mesh.PathId;
+                var partCount = _mesh.MeshPartCount > 0 ? _mesh.MeshPartCount : 1;
+                _status.Text = _mesh.VertexCount.ToString("N0") + " vertices · " + _mesh.TriangleCount.ToString("N0") +
+                    " triangles · " + partCount.ToString("N0") + " mesh part(s)";
+                _help.Text = "Source: " + System.IO.Path.GetFileName(_mesh.SourceBundlePath) + " · Path ID " + _mesh.PathId +
+                    " · " + (_mesh.PreviewNotes ?? "Static geometry only");
                 _gl.Invalidate();
             }
             catch (Exception ex)
