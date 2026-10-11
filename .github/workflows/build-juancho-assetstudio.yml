@@ -117,7 +117,8 @@ jobs:
           4. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
           5. Select a Mesh or GameObject object and click Preview Selected Model / Mesh (static) to orbit, pan, zoom, and toggle wireframe.
              GameObject preview combines available child MeshFilter / SkinnedMeshRenderer geometry; skinned meshes are shown without bone deformation.
-          6. Use Skill Timeline to author and save manual event timings.
+          6. Select an AnimationClip and click Inspect Selected AnimationClip to view duration, curve bindings/key counts, and embedded events.
+          7. Use Skill Timeline to author and save manual event timings.
 
           Safety:
           - Visual Lab parses isolated temporary copies of selected Unity input files.
@@ -128,6 +129,7 @@ jobs:
           Current limitations:
           - The 3D viewport draws one Mesh or combines a GameObject subtree as static geometry, but does not render recovered materials, textures, or the original shader pipeline.
           - Skinned-mesh deformation and rig binding are not connected yet.
+          - AnimationClip inspection reads metadata/curves/events, but does not play the clip or deform the model.
           - AnimationClip playback, Unity particle/trail runtime, shader reconstruction, and executing the skill timeline are not available in this foundation build.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
 
