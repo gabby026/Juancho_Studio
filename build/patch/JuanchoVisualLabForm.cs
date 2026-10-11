@@ -43,6 +43,7 @@ namespace AssetStudioGUI
         private readonly Button _previewMeshButton = new Button();
         private readonly Button _inspectAnimationButton = new Button();
         private readonly Button _playAnimationButton = new Button();
+        private readonly Button _openBundleInspectorButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private VisualLabUnityIndexResult _lastUnityIndex;
@@ -207,6 +208,11 @@ namespace AssetStudioGUI
             _playAnimationButton.Enabled = false;
             _playAnimationButton.Click += (s, e) => OpenAnimationPlayback();
             toolbar.Controls.Add(_playAnimationButton);
+            _openBundleInspectorButton.Text = "Inspect hero_skin as Prefab (bones + materials + textures)";
+            _openBundleInspectorButton.AutoSize = true;
+            _openBundleInspectorButton.Enabled = false;
+            _openBundleInspectorButton.Click += (s, e) => OpenHeroBundleInspector();
+            toolbar.Controls.Add(_openBundleInspectorButton);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
             _objectCountStatus.Text = "No parsed objects";
@@ -365,6 +371,28 @@ namespace AssetStudioGUI
             _playAnimationButton.Enabled = _lastUnityIndex != null &&
                 JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(_lastUnityIndex.InputFiles)
                     .Any(path => JuanchoVisualLabAnimationPlaybackForm.BundleHasModelAndClip(_lastUnityIndex.Assets, path));
+            _openBundleInspectorButton.Enabled = _lastUnityIndex != null &&
+                JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(_lastUnityIndex.InputFiles).Length > 0;
+        }
+
+        private void OpenHeroBundleInspector()
+        {
+            if (_lastUnityIndex == null || _lastUnityIndex.InputFiles.Count == 0)
+            {
+                MessageBox.Show(this, "Scan and analyze a hero package first.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var heroBundles = JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(_lastUnityIndex.InputFiles);
+            if (heroBundles.Length == 0)
+            {
+                MessageBox.Show(this, "No exact hero_<heroname>_skin.unity3d file was found. Select the complete hero package folder, including the hero skin bundle.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            var preferred = heroBundles.FirstOrDefault(path => string.Equals(path, selected?.SourceBundlePath, StringComparison.OrdinalIgnoreCase))
+                ?? heroBundles.FirstOrDefault();
+            using (var inspector = new JuanchoVisualLabBundleInspectorForm(_lastUnityIndex.InputFiles, heroBundles, preferred))
+                inspector.ShowDialog(this);
         }
 
         private async Task PreviewSelectedMeshAsync()
