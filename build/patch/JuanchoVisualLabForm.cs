@@ -42,6 +42,7 @@ namespace AssetStudioGUI
         private readonly Button _analyzeObjectsButton = new Button();
         private readonly Button _previewMeshButton = new Button();
         private readonly Button _inspectAnimationButton = new Button();
+        private readonly Button _playAnimationButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private VisualLabUnityIndexResult _lastUnityIndex;
@@ -201,6 +202,11 @@ namespace AssetStudioGUI
             _inspectAnimationButton.Enabled = false;
             _inspectAnimationButton.Click += async (s, e) => await InspectSelectedAnimationClipAsync();
             toolbar.Controls.Add(_inspectAnimationButton);
+            _playAnimationButton.Text = "Interactive Model + Animation Player";
+            _playAnimationButton.AutoSize = true;
+            _playAnimationButton.Enabled = false;
+            _playAnimationButton.Click += (s, e) => OpenAnimationPlayback();
+            toolbar.Controls.Add(_playAnimationButton);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
             _objectCountStatus.Text = "No parsed objects";
@@ -356,6 +362,9 @@ namespace AssetStudioGUI
             _inspectAnimationButton.Enabled = selected != null &&
                 string.Equals(selected.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase) &&
                 _lastUnityIndex != null;
+            _playAnimationButton.Enabled = _lastUnityIndex != null &&
+                _lastUnityIndex.Assets.Any(x => string.Equals(x.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase)) &&
+                _lastUnityIndex.Assets.Any(x => string.Equals(x.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase));
         }
 
         private async Task PreviewSelectedMeshAsync()
@@ -403,6 +412,17 @@ namespace AssetStudioGUI
                 _progressBar.MarqueeAnimationSpeed = 0;
                 SetScanning(false);
             }
+        }
+
+        private void OpenAnimationPlayback()
+        {
+            if (_lastUnityIndex == null || _lastUnityIndex.InputFiles.Count == 0)
+            {
+                MessageBox.Show(this, "Scan and analyze a package first.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            using (var player = new JuanchoVisualLabAnimationPlaybackForm(_lastUnityIndex.InputFiles, _lastUnityIndex.Assets))
+                player.ShowDialog(this);
         }
 
         private async Task InspectSelectedAnimationClipAsync()
