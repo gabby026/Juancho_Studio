@@ -321,11 +321,17 @@ namespace Juancho.VisualLab
             Dictionary<string, VisualLabUnityAssetItem> assetLookup,
             List<VisualLabUnityDependency> dependencies)
         {
-            var fileId = PPtrFileIdField == null ? -1 : Convert.ToInt32(PPtrFileIdField.GetValue(pointer));
-            var pathId = PPtrPathIdField == null ? 0 : Convert.ToInt64(PPtrPathIdField.GetValue(pointer));
+            // PPtr<T> uses different runtime types for each T; reflect from the actual
+            // closed generic type rather than a PPtr<Object> FieldInfo.
+            var pointerType = pointer.GetType();
+            var fileIdField = pointerType.GetField("m_FileID", InstanceFields);
+            var pathIdField = pointerType.GetField("m_PathID", InstanceFields);
+            var owningFileField = pointerType.GetField("assetsFile", InstanceFields);
+            var fileId = fileIdField == null ? -1 : Convert.ToInt32(fileIdField.GetValue(pointer));
+            var pathId = pathIdField == null ? 0 : Convert.ToInt64(pathIdField.GetValue(pointer));
             if (pathId == 0) return;
 
-            var pointerOwner = PPtrAssetsFileField == null ? owningFile : PPtrAssetsFileField.GetValue(pointer) as SerializedFile;
+            var pointerOwner = owningFileField == null ? owningFile : owningFileField.GetValue(pointer) as SerializedFile;
             pointerOwner = pointerOwner ?? owningFile;
             SerializedFile targetFile = null;
             string targetFileName = pointerOwner.fileName ?? Path.GetFileName(pointerOwner.fullName ?? "");
