@@ -503,9 +503,142 @@ namespace Juancho.VisualLab
                             return -1;
                         }).ToArray();
                     }
+                    if (part.IsSkinned)
+                        ValidateSkinningBinding(part, scene.Nodes);
                     scene.MeshParts.Add(part);
                 }
             }
+        }
+
+
+        /// <summary>
+        /// Calibrates the skinning coordinate convention against the mesh's bind pose.
+        /// A partial or inconsistent bone map causes severe vertex spikes when only some
+        /// influences are applied; in that case the preview intentionally uses a rigid
+        /// renderer transform instead of displaying a corrupted mesh.
+        /// </summary>
+        private static void ValidateSkinningBinding(PlaybackMeshPart part, List<PlaybackNode> nodes)
+        {
+            part.SkinningReliable = false;
+            part.SkinningMatrixOrder = 0;
+            part.SkinningStatus = "No valid bind-pose skinning data; using rigid fallback";
+            int vertexCount = part.Vertices?.Length / 3 ?? 0;
+            if (vertexCount <= 0 || part.Weights == null || part.Weights.Length != vertexCount * 4 ||
+                part.BoneIndices == null || part.BoneIndices.Length != part.Weights.Length ||
+                part.BindPoses == null || part.BindPoses.Length == 0 ||
+                part.BoneNodeIndices == null || part.BoneNodeIndices.Length == 0 ||
+                part.NodeIndex < 0 || part.NodeIndex >= nodes.Count)
+            {
+                part.SkinningStatus = "Missing or mismatched skin weights, bind poses, bone references, or renderer transform";
+                return;
+            }
+
+            bool hasInfluence = false;
+            for (int i = 0; i < part.Weights.Length; i++)
+            {
+                var weight = part.Weights[i];
+                if (!IsFinite(weight) || weight <= 0.00001f) continue;
+                hasInfluence = true;
+                int boneIndex = part.BoneIndices[i];
+                if (boneIndex < 0 || boneIndex >= part.BindPoses.Length ||
+                    boneIndex >= part.BoneNodeIndices.Length ||
+                    part.BoneNodeIndices[boneIndex] < 0 || part.BoneNodeIndices[boneIndex] >= nodes.Count)
+                {
+                    part.SkinningStatus = "At least one weighted bone does not resolve to a Transform in the loaded hierarchy; skipped partial skinning to prevent stretched spikes";
+                    return;
+                }
+            }
+            if (!hasInfluence)
+            {
+                part.SkinningStatus = "Mesh has no positive bone weights; using rigid fallback";
+                return;
+            }
+
+            var worlds = new NMatrix[nodes.Count];
+            for (int i = 0; i < nodes.Count; i++)
+            {
+                var node = nodes[i];
+                var rotation = node.Rotation;
+                if (!IsFinite(rotation.X) || !IsFinite(rotation.Y) || !IsFinite(rotation.Z) ||
+                    !IsFinite(rotation.W) || rotation.LengthSquared() < 1e-10f)
+                    rotation = NQuaternion.Identity;
+                else
+                    rotation = NQuaternion.Normalize(rotation);
+
+                var local = NMatrix.CreateScale(node.Scale) *
+                    NMatrix.CreateFromQuaternion(rotation) *
+                    NMatrix.CreateTranslation(node.Position);
+                worlds[i] = node.ParentIndex >= 0 && node.ParentIndex < i
+                    ? local * worlds[node.ParentIndex]
+                    : local;
+            }
+
+            var min = new NVector3(float.PositiveInfinity);
+            var max = new NVector3(float.NegativeInfinity);
+            for (int i = 0; i < part.Vertices.Length; i += 3)
+            {
+                var v = new NVector3(part.Vertices[i], part.Vertices[i + 1], part.Vertices[i + 2]);
+                min = NVector3.Min(min, v);
+                max = NVector3.Max(max, v);
+            }
+            var diagonal = Math.Max((max - min).Length(), 0.0001f);
+            var rendererWorld = worlds[part.NodeIndex];
+            var stride = Math.Max(1, vertexCount / 96);
+            double standardError = 0;
+            double alternateError = 0;
+            int samples = 0;
+
+            for (int vertex = 0; vertex < vertexCount; vertex += stride)
+            {
+                var source = new NVector3(part.Vertices[vertex * 3], part.Vertices[vertex * 3 + 1], part.Vertices[vertex * 3 + 2]);
+                var expected = NVector3.Transform(source, rendererWorld);
+                NVector3 standard = NVector3.Zero;
+                NVector3 alternate = NVector3.Zero;
+                float weightTotal = 0;
+
+                for (int influence = 0; influence < 4; influence++)
+                {
+                    int slot = vertex * 4 + influence;
+                    float weight = part.Weights[slot];
+                    if (!IsFinite(weight) || weight <= 0) continue;
+                    int boneIndex = part.BoneIndices[slot];
+                    int boneNode = part.BoneNodeIndices[boneIndex];
+                    var bindPose = part.BindPoses[boneIndex];
+                    standard += NVector3.Transform(source, bindPose * worlds[boneNode]) * weight;
+                    alternate += NVector3.Transform(source, worlds[boneNode] * bindPose) * weight;
+                    weightTotal += weight;
+                }
+
+                if (weightTotal <= 0.00001f) continue;
+                standard /= weightTotal;
+                alternate /= weightTotal;
+                standardError += NVector3.Distance(standard, expected) / diagonal;
+                alternateError += NVector3.Distance(alternate, expected) / diagonal;
+                samples++;
+            }
+
+            if (samples == 0)
+            {
+                part.SkinningStatus = "No usable weighted vertices; using rigid fallback";
+                return;
+            }
+
+            var standardMean = standardError / samples;
+            var alternateMean = alternateError / samples;
+            var best = Math.Min(standardMean, alternateMean);
+            if (!double.IsFinite(best) || best > 0.04)
+            {
+                part.SkinningStatus = string.Format(
+                    "Bind-pose calibration error {0:P1}; refusing unsafe skinning to prevent vertex spikes",
+                    best);
+                return;
+            }
+
+            part.SkinningMatrixOrder = alternateMean < standardMean ? 1 : 0;
+            part.SkinningReliable = true;
+            part.SkinningStatus = "Bind-pose calibrated (" +
+                (part.SkinningMatrixOrder == 1 ? "alternate matrix order" : "Unity bind-pose matrix order") +
+                ", mean rest error " + best.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
         }
 
         private static void BuildClip(VisualLabPlaybackScene scene, AssetStudio.AnimationClip clip, VisualLabUnityAssetItem item, List<AssetStudio.Transform> transforms)
