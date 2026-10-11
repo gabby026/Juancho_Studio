@@ -43,6 +43,20 @@ namespace Juancho.VisualLab
         public string Status { get { return IsResolved ? "Resolved" : "Unresolved / not loaded"; } }
     }
 
+    public sealed class VisualLabMeshPreviewData
+    {
+        public string Name { get; set; } = "";
+        public string SourceBundlePath { get; set; } = "";
+        public long PathId { get; set; }
+        public string UnityVersion { get; set; } = "";
+        public string Platform { get; set; } = "";
+        public int VertexCount { get; set; }
+        public int TriangleCount { get; set; }
+        public float[] Positions { get; set; } = Array.Empty<float>();
+        public float[] Normals { get; set; } = Array.Empty<float>();
+        public uint[] Indices { get; set; } = Array.Empty<uint>();
+    }
+
     public sealed class VisualLabUnityIndexDiagnostic
     {
         public string Severity { get; set; } = "Info";
@@ -317,6 +331,197 @@ namespace Juancho.VisualLab
         private static bool ContainsAny(string value, params string[] candidates)
         {
             return candidates.Any(candidate => value.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        public static Task<VisualLabMeshPreviewData> ExtractMeshPreviewAsync(
+            IEnumerable<string> paths,
+            VisualLabUnityAssetItem selectedAsset)
+        {
+            if (selectedAsset == null) throw new ArgumentNullException(nameof(selectedAsset));
+            if (!string.Equals(selectedAsset.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Select a serialized Mesh object to preview its static geometry.", nameof(selectedAsset));
+
+            var files = (paths ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x) && File.Exists(x))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (files.Length == 0)
+                throw new ArgumentException("No source bundle files are available for mesh preview.", nameof(paths));
+
+            return Task.Run(() => ExtractMeshPreview(files, selectedAsset));
+        }
+
+        private static VisualLabMeshPreviewData ExtractMeshPreview(string[] files, VisualLabUnityAssetItem selectedAsset)
+        {
+            var manager = new AssetsManager();
+            var workspace = Path.Combine(Path.GetTempPath(), "JuanchoMLBBVisualLab", Guid.NewGuid().ToString("N"));
+            var workspaceToOriginalPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                Directory.CreateDirectory(workspace);
+                var isolatedFiles = CopyInputsToWorkspace(files, workspace, workspaceToOriginalPath);
+                MergeSplitPartsInWorkspace(workspace);
+                manager.LoadFiles(isolatedFiles);
+
+                var intendedPath = Path.GetFullPath(selectedAsset.SourceBundlePath ?? "");
+                foreach (var serializedFile in manager.assetsFileList)
+                {
+                    var originalPath = ResolveOriginalSourcePath(serializedFile, workspaceToOriginalPath, files, workspace);
+                    if (string.IsNullOrWhiteSpace(originalPath) ||
+                        !string.Equals(Path.GetFullPath(originalPath), intendedPath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    foreach (var obj in serializedFile.Objects ?? new List<UnityObject>())
+                    {
+                        if (obj == null || obj.m_PathID != selectedAsset.PathId) continue;
+                        if (!(obj is AssetStudio.Mesh mesh)) continue;
+                        return BuildMeshPreviewData(mesh, selectedAsset, originalPath, serializedFile.unityVersion, serializedFile.m_TargetPlatform.ToString());
+                    }
+                }
+
+                throw new InvalidDataException(
+                    "The selected Mesh could not be reloaded from its source bundle and Path ID. Re-scan the package and select the Mesh again.");
+            }
+            catch (Exception ex) when (!(ex is InvalidDataException))
+            {
+                throw new InvalidDataException("Could not extract static mesh geometry from isolated bundle copies. Source files were not modified. Details: " + ex.Message, ex);
+            }
+            finally
+            {
+                try { manager.Clear(); } catch { }
+                try { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); } catch { }
+            }
+        }
+
+        private static VisualLabMeshPreviewData BuildMeshPreviewData(
+            AssetStudio.Mesh mesh,
+            VisualLabUnityAssetItem selectedAsset,
+            string sourcePath,
+            string unityVersion,
+            string platform)
+        {
+            if (mesh.m_VertexCount <= 0 || mesh.m_Vertices == null || mesh.m_Vertices.Length == 0)
+                throw new InvalidDataException("This Mesh has no unpacked vertex data. Compressed or unsupported vertex formats need a conversion adapter.");
+
+            var vertexCount = mesh.m_VertexCount;
+            var stride = mesh.m_Vertices.Length >= vertexCount * 4 && mesh.m_Vertices.Length % vertexCount == 0
+                ? mesh.m_Vertices.Length / vertexCount
+                : 3;
+            if (stride < 3 || mesh.m_Vertices.Length < vertexCount * stride)
+                throw new InvalidDataException("The Mesh vertex array does not match its declared vertex count.");
+
+            var positions = new float[vertexCount * 3];
+            var min = new[] { float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity };
+            var max = new[] { float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity };
+            for (var i = 0; i < vertexCount; i++)
+            {
+                for (var axis = 0; axis < 3; axis++)
+                {
+                    var value = mesh.m_Vertices[i * stride + axis];
+                    if (float.IsNaN(value) || float.IsInfinity(value))
+                        throw new InvalidDataException("This Mesh contains a non-finite vertex value.");
+                    positions[i * 3 + axis] = value;
+                    min[axis] = Math.Min(min[axis], value);
+                    max[axis] = Math.Max(max[axis], value);
+                }
+            }
+
+            var sourceIndices = mesh.m_Indices ?? new List<uint>();
+            var indices = new List<uint>(sourceIndices.Count);
+            for (var i = 0; i + 2 < sourceIndices.Count; i += 3)
+            {
+                var a = sourceIndices[i];
+                var b = sourceIndices[i + 1];
+                var d = sourceIndices[i + 2];
+                if (a >= vertexCount || b >= vertexCount || d >= vertexCount) continue;
+                if (a == b || b == d || a == d) continue;
+                indices.Add(a);
+                indices.Add(b);
+                indices.Add(d);
+            }
+            if (indices.Count < 3)
+                throw new InvalidDataException("The selected Mesh has no usable triangle indices for the static preview.");
+
+            var normals = TryUnpackNormals(mesh.m_Normals, vertexCount);
+            if (normals == null)
+                normals = CalculateNormals(positions, indices, vertexCount);
+
+            return new VisualLabMeshPreviewData
+            {
+                Name = string.IsNullOrWhiteSpace(mesh.m_Name) ? selectedAsset.Name : mesh.m_Name,
+                SourceBundlePath = sourcePath,
+                PathId = mesh.m_PathID,
+                UnityVersion = unityVersion ?? "",
+                Platform = platform ?? "",
+                VertexCount = vertexCount,
+                TriangleCount = indices.Count / 3,
+                Positions = positions,
+                Normals = normals,
+                Indices = indices.ToArray()
+            };
+        }
+
+        private static float[] TryUnpackNormals(float[] source, int vertexCount)
+        {
+            if (source == null || source.Length == 0 || vertexCount <= 0 || source.Length % vertexCount != 0)
+                return null;
+            var stride = source.Length / vertexCount;
+            if (stride < 3 || stride > 4) return null;
+            var result = new float[vertexCount * 3];
+            for (var i = 0; i < vertexCount; i++)
+            {
+                for (var axis = 0; axis < 3; axis++)
+                {
+                    var value = source[i * stride + axis];
+                    if (float.IsNaN(value) || float.IsInfinity(value)) return null;
+                    result[i * 3 + axis] = value;
+                }
+            }
+            return result;
+        }
+
+        private static float[] CalculateNormals(float[] positions, List<uint> indices, int vertexCount)
+        {
+            var normals = new float[vertexCount * 3];
+            for (var i = 0; i + 2 < indices.Count; i += 3)
+            {
+                var a = (int)indices[i];
+                var b = (int)indices[i + 1];
+                var c = (int)indices[i + 2];
+                var abx = positions[b * 3] - positions[a * 3];
+                var aby = positions[b * 3 + 1] - positions[a * 3 + 1];
+                var abz = positions[b * 3 + 2] - positions[a * 3 + 2];
+                var acx = positions[c * 3] - positions[a * 3];
+                var acy = positions[c * 3 + 1] - positions[a * 3 + 1];
+                var acz = positions[c * 3 + 2] - positions[a * 3 + 2];
+                var nx = aby * acz - abz * acy;
+                var ny = abz * acx - abx * acz;
+                var nz = abx * acy - aby * acx;
+                normals[a * 3] += nx; normals[a * 3 + 1] += ny; normals[a * 3 + 2] += nz;
+                normals[b * 3] += nx; normals[b * 3 + 1] += ny; normals[b * 3 + 2] += nz;
+                normals[c * 3] += nx; normals[c * 3 + 1] += ny; normals[c * 3 + 2] += nz;
+            }
+            for (var i = 0; i < vertexCount; i++)
+            {
+                var x = normals[i * 3];
+                var y = normals[i * 3 + 1];
+                var z = normals[i * 3 + 2];
+                var length = (float)Math.Sqrt(x * x + y * y + z * z);
+                if (length < 1e-8f)
+                {
+                    normals[i * 3] = 0;
+                    normals[i * 3 + 1] = 1;
+                    normals[i * 3 + 2] = 0;
+                }
+                else
+                {
+                    normals[i * 3] = x / length;
+                    normals[i * 3 + 1] = y / length;
+                    normals[i * 3 + 2] = z / length;
+                }
+            }
+            return normals;
         }
 
         private static string[] CopyInputsToWorkspace(
