@@ -32,6 +32,9 @@ namespace Juancho.VisualLab
     {
         public float Time { get; set; }
         public NVector3 Value { get; set; }
+        public NVector3 InSlope { get; set; }
+        public NVector3 OutSlope { get; set; }
+        public bool HasTangents { get; set; }
     }
 
     public sealed class PlaybackQuaternionKey
@@ -62,6 +65,9 @@ namespace Juancho.VisualLab
         public int[] BoneIndices { get; set; } = Array.Empty<int>();
         public int[] BoneNodeIndices { get; set; } = Array.Empty<int>();
         public NMatrix[] BindPoses { get; set; } = Array.Empty<NMatrix>();
+        public bool SkinningReliable { get; set; }
+        public int SkinningMatrixOrder { get; set; }
+        public string SkinningStatus { get; set; } = "Skinning data not validated";
     }
 
     public sealed class VisualLabPlaybackScene
@@ -126,10 +132,10 @@ namespace Juancho.VisualLab
             foreach (var part in MeshParts)
             {
                 var nodeWorld = part.NodeIndex >= 0 && part.NodeIndex < worlds.Length ? worlds[part.NodeIndex] : NMatrix.Identity;
-                var isActuallySkinned = part.IsSkinned &&
+                var isActuallySkinned = part.IsSkinned && part.SkinningReliable &&
                     part.Weights.Length == part.Vertices.Length / 3 * 4 &&
                     part.BoneIndices.Length == part.Weights.Length &&
-                    part.BoneNodeIndices.Any(index => index >= 0 && index < worlds.Length) &&
+                    part.BoneNodeIndices.Length > 0 &&
                     part.BindPoses.Length > 0;
 
                 for (int vertex = 0; vertex < part.Vertices.Length / 3; vertex++)
@@ -172,7 +178,9 @@ namespace Juancho.VisualLab
                                 var boneNode = part.BoneNodeIndices[boneId];
                                 if (boneNode < 0 || boneNode >= worlds.Length) continue;
                                 var normalizedWeight = weight / validWeightTotal;
-                                var skinMatrix = part.BindPoses[boneId] * worlds[boneNode];
+                                var skinMatrix = part.SkinningMatrixOrder == 1
+                                    ? worlds[boneNode] * part.BindPoses[boneId]
+                                    : part.BindPoses[boneId] * worlds[boneNode];
                                 p += NVector3.Transform(localPosition, skinMatrix) * normalizedWeight;
                                 n += NVector3.TransformNormal(localNormal, skinMatrix) * normalizedWeight;
                             }
@@ -207,8 +215,23 @@ namespace Juancho.VisualLab
             if (next <= 0) return keys[0].Value;
             var a = keys[next - 1]; var b = keys[next];
             var span = Math.Max(0.000001f, b.Time - a.Time);
-            return NVector3.Lerp(a.Value, b.Value, Math.Max(0, Math.Min(1, (time - a.Time) / span)));
+            var u = Math.Max(0, Math.Min(1, (time - a.Time) / span));
+            if (a.HasTangents && b.HasTangents && IsFiniteVector(a.OutSlope) && IsFiniteVector(b.InSlope))
+            {
+                var u2 = u * u;
+                var u3 = u2 * u;
+                var h00 = 2f * u3 - 3f * u2 + 1f;
+                var h10 = u3 - 2f * u2 + u;
+                var h01 = -2f * u3 + 3f * u2;
+                var h11 = u3 - u2;
+                return a.Value * h00 + a.OutSlope * (h10 * span) +
+                    b.Value * h01 + b.InSlope * (h11 * span);
+            }
+            return NVector3.Lerp(a.Value, b.Value, u);
         }
+
+        private static bool IsFiniteVector(NVector3 value) =>
+            IsFinite(value.X) && IsFinite(value.Y) && IsFinite(value.Z);
 
         private static NQuaternion SampleQuaternion(PlaybackQuaternionKey[] keys, float time, NQuaternion fallback)
         {
@@ -349,13 +372,18 @@ namespace Juancho.VisualLab
                 }
                 scene.Indices = allIndices.ToArray();
                 scene.Evaluate(0, false);
-                var partsWithSkinWeights = scene.MeshParts.Count(x => x.IsSkinned && x.Weights.Length == x.Vertices.Length / 3 * 4 && x.BindPoses.Length > 0);
+                var partsWithSkinWeights = scene.MeshParts.Count(x => x.IsSkinned && x.SkinningReliable);
+                var partsWithRigidFallback = scene.MeshParts.Count(x => x.IsSkinned && !x.SkinningReliable);
+                var skinningWarnings = scene.MeshParts.Where(x => x.IsSkinned && !x.SkinningReliable)
+                    .Select(x => x.Name + ": " + x.SkinningStatus).Distinct().Take(3).ToArray();
                 scene.PlaybackNotes =
                     "Supported Transform curve channels: " + scene.DirectCurveCount +
                     "; curve paths not found in selected hierarchy: " + scene.UnboundCurveCount +
                     "; skinned mesh parts: " + scene.SkinnedPartCount +
-                    "; parts with usable skin weights: " + partsWithSkinWeights +
+                    "; parts with calibrated skinning: " + partsWithSkinWeights +
+                    "; parts using safe rigid fallback: " + partsWithRigidFallback +
                     "; clip events: " + scene.ClipEventCount + ". " +
+                    (skinningWarnings.Length == 0 ? "" : "Skinning fallback: " + string.Join(" | ", skinningWarnings) + ". ") +
                     (scene.DirectCurveCount == 0
                         ? "No supported Transform channels were decoded. Check the selected root/clip and binding diagnostics."
                         : "Vector curves use linear interpolation and quaternion curves use slerp; Unity tangents, Avatar muscle reconstruction and controller transitions are not fully reproduced.") +
