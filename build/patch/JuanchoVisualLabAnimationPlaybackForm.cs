@@ -849,54 +849,197 @@ namespace Juancho.VisualLab
                 {
                     int streamedCurveCount = embeddedClip.m_StreamedClip == null
                         ? 0 : (int)Math.Min((long)int.MaxValue, (long)embeddedClip.m_StreamedClip.curveCount);
-                    if (streamedFrames != null)
+                    var dense = embeddedClip.m_DenseClip;
+                    int denseCurveCount = dense == null ? 0 : (int)Math.Min((long)int.MaxValue, (long)dense.m_CurveCount);
+                    var constant = embeddedClip.m_ConstantClip;
+                    int constantStart = checked(streamedCurveCount + denseCurveCount);
+                    var streamedByCurve = new Dictionary<int, List<PlaybackScalarKey>>();
+
+                    // Streamed keys are scalar curves. Their indices are sparse curve indices,
+                    // not sequential offsets in frame.keyList. Treating the key list as a packed
+                    // Vector3/Quaternion array misassigned X/Y/Z and quaternion channels, which
+                    // can explode animated vertices even when the Mesh and bind poses are valid.
+                    if (streamedFrames != null && streamedCurveCount > 0)
                     {
                         for (int frameIndex = 1; frameIndex < streamedFrames.Count - 1; frameIndex++)
                         {
                             var frame = streamedFrames[frameIndex];
-                            var frameKeys = frame?.keyList ?? Array.Empty<AssetStudio.StreamedClip.StreamedCurveKey>();
-                            var values = frameKeys.Select(k => k?.value ?? 0f).ToArray();
-                            int cursor = 0;
-                            while (cursor < frameKeys.Length)
+                            if (frame == null || !IsFinite(frame.time)) continue;
+                            foreach (var key in frame.keyList ?? Array.Empty<AssetStudio.StreamedClip.StreamedCurveKey>())
                             {
-                                int curveIndex = frameKeys[cursor]?.index ?? cursor;
-                                ConsumeSerializedCurve(bindingConstant.FindBinding(curveIndex), frame.time, values, 0, ref cursor);
+                                if (key == null || key.index < 0 || key.index >= streamedCurveCount || !IsFinite(key.value))
+                                    continue;
+                                if (!streamedByCurve.TryGetValue(key.index, out var scalarKeys))
+                                {
+                                    scalarKeys = new List<PlaybackScalarKey>();
+                                    streamedByCurve[key.index] = scalarKeys;
+                                }
+                                if (scalarKeys.Any(existing => Math.Abs(existing.Time - frame.time) < 0.000001f))
+                                    continue;
+                                scalarKeys.Add(new PlaybackScalarKey
+                                {
+                                    Time = frame.time,
+                                    Value = key.value,
+                                    InSlope = key.inSlope,
+                                    OutSlope = key.outSlope,
+                                    HasTangents = frameIndex >= 2 &&
+                                        IsFinite(key.inSlope) && IsFinite(key.outSlope)
+                                });
                             }
                         }
+                        foreach (var keys in streamedByCurve.Values)
+                            keys.Sort((a, b) => a.Time.CompareTo(b.Time));
                     }
 
-                    var dense = embeddedClip.m_DenseClip;
-                    int denseCurveCount = dense == null ? 0 : (int)Math.Min((long)int.MaxValue, (long)dense.m_CurveCount);
-                    if (dense != null && dense.m_FrameCount > 0 && denseCurveCount > 0 &&
-                        dense.m_SampleArray != null && dense.m_SampleRate > 0 && IsFinite(dense.m_SampleRate))
+                    var defaultByPath = scene.Nodes
+                        .GroupBy(node => node.Path ?? "", StringComparer.Ordinal)
+                        .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+                    int scalarOffset = 0;
+                    int skippedBindingCount = 0;
+
+                    foreach (var binding in bindingConstant.genericBindings)
                     {
-                        for (int frameIndex = 0; frameIndex < dense.m_FrameCount; frameIndex++)
+                        if (binding == null) continue;
+                        int attribute = (int)binding.attribute;
+                        int width = BindingWidth(binding);
+                        int scalarEnd = checked(scalarOffset + width);
+                        bool isTransformChannel = binding.typeID == AssetStudio.ClassIDType.Transform &&
+                            (attribute == 1 || attribute == 2 || attribute == 3 || attribute == 4);
+
+                        if (isTransformChannel)
                         {
-                            float time = dense.m_BeginTime + frameIndex / dense.m_SampleRate;
-                            int baseOffset = checked(frameIndex * denseCurveCount);
-                            int cursor = 0;
-                            while (cursor < denseCurveCount)
-                                ConsumeSerializedCurve(bindingConstant.FindBinding(streamedCurveCount + cursor),
-                                    time, dense.m_SampleArray, baseOffset, ref cursor);
+                            string path = pathHashMap.TryGetValue(binding.path, out var bindingPath)
+                                ? NormalizePath(bindingPath)
+                                : "#unresolved_" + binding.path.ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+
+                            var vectorDestination = attribute == 1 ? positionsByPath :
+                                attribute == 3 ? scalesByPath : attribute == 4 ? eulersByPath : null;
+                            bool alreadyHasDirectKeys = attribute == 2
+                                ? rotationsByPath.ContainsKey(path)
+                                : vectorDestination != null && vectorDestination.ContainsKey(path);
+
+                            if (alreadyHasDirectKeys || path.StartsWith("#unresolved_", StringComparison.Ordinal))
+                            {
+                                if (path.StartsWith("#unresolved_", StringComparison.Ordinal))
+                                    skippedBindingCount++;
+                                scalarOffset = scalarEnd;
+                                continue;
+                            }
+
+                            bool isStreamed = scalarOffset >= 0 && scalarEnd <= streamedCurveCount;
+                            bool isDense = dense != null && dense.m_SampleArray != null &&
+                                scalarOffset >= streamedCurveCount && scalarEnd <= constantStart &&
+                                scalarEnd - streamedCurveCount <= denseCurveCount;
+                            bool isConstant = constant?.data != null &&
+                                scalarOffset >= constantStart && scalarEnd <= constantStart + constant.data.Length;
+
+                            if (isStreamed)
+                            {
+                                var times = Enumerable.Range(scalarOffset, width)
+                                    .Where(index => streamedByCurve.ContainsKey(index))
+                                    .SelectMany(index => streamedByCurve[index].Select(key => key.Time))
+                                    .Where(IsFinite)
+                                    .Distinct()
+                                    .OrderBy(time => time)
+                                    .ToArray();
+
+                                PlaybackNode baseNode = defaultByPath.TryGetValue(path, out var foundNode) ? foundNode : null;
+                                var baselinePosition = baseNode?.Position ?? NVector3.Zero;
+                                var baselineScale = baseNode?.Scale ?? NVector3.One;
+                                var baselineEuler = NVector3.Zero;
+                                var baselineRotation = baseNode?.Rotation ?? NQuaternion.Identity;
+
+                                foreach (float time in times)
+                                {
+                                    if (attribute == 2)
+                                    {
+                                        var q = new NQuaternion(
+                                            SampleScalar(streamedByCurve, scalarOffset, time, baselineRotation.X),
+                                            SampleScalar(streamedByCurve, scalarOffset + 1, time, baselineRotation.Y),
+                                            SampleScalar(streamedByCurve, scalarOffset + 2, time, baselineRotation.Z),
+                                            SampleScalar(streamedByCurve, scalarOffset + 3, time, baselineRotation.W));
+                                        AddRotationKey(path, time, q);
+                                    }
+                                    else
+                                    {
+                                        var baseline = attribute == 1 ? baselinePosition :
+                                            attribute == 3 ? baselineScale : baselineEuler;
+                                        var value = new NVector3(
+                                            SampleScalar(streamedByCurve, scalarOffset, time, baseline.X),
+                                            SampleScalar(streamedByCurve, scalarOffset + 1, time, baseline.Y),
+                                            SampleScalar(streamedByCurve, scalarOffset + 2, time, baseline.Z));
+                                        AddVectorKey(vectorDestination, path,
+                                            attribute == 1 ? "position" : attribute == 3 ? "scale" : "euler",
+                                            time, value);
+                                    }
+                                }
+                            }
+                            else if (isDense && denseCurveCount > 0 &&
+                                dense.m_FrameCount > 0 && dense.m_SampleRate > 0 && IsFinite(dense.m_SampleRate) &&
+                                IsFinite(dense.m_BeginTime))
+                            {
+                                int relativeOffset = scalarOffset - streamedCurveCount;
+                                for (int frameIndex = 0; frameIndex < dense.m_FrameCount; frameIndex++)
+                                {
+                                    long baseOffsetLong = (long)frameIndex * denseCurveCount + relativeOffset;
+                                    if (baseOffsetLong < 0 || baseOffsetLong + width > dense.m_SampleArray.Length) break;
+                                    int baseOffset = (int)baseOffsetLong;
+                                    float time = dense.m_BeginTime + frameIndex / dense.m_SampleRate;
+                                    if (attribute == 2)
+                                    {
+                                        AddRotationKey(path, time, new NQuaternion(
+                                            dense.m_SampleArray[baseOffset], dense.m_SampleArray[baseOffset + 1],
+                                            dense.m_SampleArray[baseOffset + 2], dense.m_SampleArray[baseOffset + 3]));
+                                    }
+                                    else
+                                    {
+                                        AddVectorKey(vectorDestination, path,
+                                            attribute == 1 ? "position" : attribute == 3 ? "scale" : "euler",
+                                            time, new NVector3(
+                                                dense.m_SampleArray[baseOffset],
+                                                dense.m_SampleArray[baseOffset + 1],
+                                                dense.m_SampleArray[baseOffset + 2]));
+                                    }
+                                }
+                            }
+                            else if (isConstant)
+                            {
+                                int relativeOffset = scalarOffset - constantStart;
+                                if (attribute == 2)
+                                {
+                                    var q = new NQuaternion(
+                                        constant.data[relativeOffset], constant.data[relativeOffset + 1],
+                                        constant.data[relativeOffset + 2], constant.data[relativeOffset + 3]);
+                                    AddRotationKey(path, 0, q);
+                                    AddRotationKey(path, scene.Duration, q);
+                                }
+                                else
+                                {
+                                    var v = new NVector3(
+                                        constant.data[relativeOffset], constant.data[relativeOffset + 1],
+                                        constant.data[relativeOffset + 2]);
+                                    AddVectorKey(vectorDestination, path,
+                                        attribute == 1 ? "position" : attribute == 3 ? "scale" : "euler", 0, v);
+                                    AddVectorKey(vectorDestination, path,
+                                        attribute == 1 ? "position" : attribute == 3 ? "scale" : "euler", scene.Duration, v);
+                                }
+                            }
+                            else if (scalarOffset < streamedCurveCount || scalarOffset < constantStart)
+                            {
+                                skippedBindingCount++;
+                            }
                         }
+
+                        scalarOffset = scalarEnd;
                     }
 
-                    var constant = embeddedClip.m_ConstantClip;
-                    if (constant?.data != null && constant.data.Length > 0)
-                    {
-                        int constantStart = checked(streamedCurveCount + denseCurveCount);
-                        foreach (float time in new[] { 0f, scene.Duration })
-                        {
-                            int cursor = 0;
-                            while (cursor < constant.data.Length)
-                                ConsumeSerializedCurve(bindingConstant.FindBinding(constantStart + cursor),
-                                    time, constant.data, 0, ref cursor);
-                        }
-                    }
+                    if (skippedBindingCount > 0)
+                        extractionNote = AppendNote(extractionNote,
+                            skippedBindingCount + " Transform bindings could not be mapped to a complete streamed/dense/constant channel group or hierarchy path.");
                 }
                 catch (Exception ex)
                 {
-                    extractionNote = AppendNote(extractionNote, "Some streamed/dense channels were skipped: " + ex.Message);
+                    extractionNote = AppendNote(extractionNote, "Some streamed/dense/constant channels were skipped: " + ex.Message);
                 }
             }
             else if (clip.m_MuscleClip != null && scene.DirectCurveCount == 0)
