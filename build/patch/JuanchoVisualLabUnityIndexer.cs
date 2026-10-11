@@ -90,22 +90,24 @@ namespace Juancho.VisualLab
         {
             var result = new VisualLabUnityIndexResult { StartedAtUtc = DateTime.UtcNow, InputFiles = files.ToList() };
             var manager = new AssetsManager();
+            var workspace = Path.Combine(Path.GetTempPath(), "JuanchoMLBBVisualLab", Guid.NewGuid().ToString("N"));
+            var workspaceToOriginalPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
-                manager.LoadFiles(files);
+                Directory.CreateDirectory(workspace);
+
+                // Critical safety boundary: AssetStudio.LoadFiles calls MergeSplitAssets, which may
+                // create merged files next to .split0 inputs. Only pass isolated copies to that API.
+                var isolatedFiles = CopyInputsToWorkspace(files, workspace, workspaceToOriginalPath);
+                MergeSplitPartsInWorkspace(workspace);
+                manager.LoadFiles(isolatedFiles);
                 result.SerializedFileCount = manager.assetsFileList.Count;
 
                 var items = new List<VisualLabUnityAssetItem>();
-                var runtimeObjects = new Dictionary<string, UnityObject>(StringComparer.OrdinalIgnoreCase);
-                var sourceFileByIdentity = new Dictionary<string, SerializedFile>(StringComparer.OrdinalIgnoreCase);
-
                 foreach (var serializedFile in manager.assetsFileList)
                 {
                     var identity = GetFileIdentity(serializedFile);
-                    if (!sourceFileByIdentity.ContainsKey(identity))
-                        sourceFileByIdentity.Add(identity, serializedFile);
-
                     foreach (var obj in serializedFile.Objects ?? new List<UnityObject>())
                     {
                         if (obj == null) continue;
@@ -117,13 +119,12 @@ namespace Juancho.VisualLab
                             ClassName = obj.type.ToString(),
                             PathId = obj.m_PathID,
                             SerializedFileName = serializedFile.fileName ?? Path.GetFileName(serializedFile.fullName ?? ""),
-                            SourceBundlePath = serializedFile.originalPath ?? serializedFile.fullName ?? "",
+                            SourceBundlePath = ResolveOriginalSourcePath(serializedFile, workspaceToOriginalPath, files, workspace),
                             UnityVersion = serializedFile.unityVersion ?? "",
                             Platform = serializedFile.m_TargetPlatform.ToString(),
                             SerializedBytes = obj.byteSize
                         };
                         items.Add(item);
-                        runtimeObjects[key] = obj;
                     }
                 }
 
@@ -188,10 +189,23 @@ namespace Juancho.VisualLab
                         Message = result.UnresolvedDependencyCount + " object references could not be resolved against this loaded package. Some targets may be outside the selected bundle set or may use duplicate basenames."
                     });
 
+                var duplicateNames = files
+                    .GroupBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key)
+                    .Take(10)
+                    .ToArray();
+                if (duplicateNames.Length > 0)
+                    result.Diagnostics.Add(new VisualLabUnityIndexDiagnostic
+                    {
+                        Severity = "Warning",
+                        Message = "Selected inputs contain duplicate file basenames (" + string.Join(", ", duplicateNames) + "). AssetStudio external references may be ambiguous for those names."
+                    });
+
                 result.Diagnostics.Add(new VisualLabUnityIndexDiagnostic
                 {
                     Severity = "Info",
-                    Message = "This index contains AssetStudio-parsed serialized objects and discovered PPtr references. It is not a runtime reconstruction, and a resolved pointer does not prove that the referenced shader or behavior is supported by the preview engine."
+                    Message = "Objects and PPtr references were parsed from isolated copies in a temporary workspace. Original source files were not passed to AssetStudio's split-file merge path and are never modified by this index operation."
                 });
             }
             catch (Exception ex)
@@ -203,17 +217,140 @@ namespace Juancho.VisualLab
                     Message = "AssetStudio could not finish parsing the selected package: " + ex.Message
                 });
                 throw new InvalidDataException(
-                    "Unity package parsing failed. No source files were modified. Details: " + ex.Message,
+                    "Unity package parsing failed. Original source files were not modified; Visual Lab parsed temporary copies. Details: " + ex.Message,
                     ex);
             }
             finally
             {
                 try { manager.Clear(); } catch { }
+                try { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); } catch { }
             }
 
             result.CompletedAtUtc = DateTime.UtcNow;
             result.DurationMilliseconds = Math.Max(0, (long)(result.CompletedAtUtc - result.StartedAtUtc).TotalMilliseconds);
             return result;
+        }
+
+        private static string[] CopyInputsToWorkspace(
+            string[] sourceFiles,
+            string workspace,
+            Dictionary<string, string> workspaceToOriginalPath)
+        {
+            var commonRoot = GetCommonDirectory(sourceFiles);
+            var copied = new List<string>(sourceFiles.Length);
+
+            for (var i = 0; i < sourceFiles.Length; i++)
+            {
+                var source = Path.GetFullPath(sourceFiles[i]);
+                var relative = Path.GetRelativePath(commonRoot, source);
+                if (Path.IsPathRooted(relative) || relative == ".." ||
+                    relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                    relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    relative = Path.Combine("_external_inputs", i.ToString("D4", System.Globalization.CultureInfo.InvariantCulture), Path.GetFileName(source));
+                }
+
+                var destination = Path.GetFullPath(Path.Combine(workspace, relative));
+                if (!VisualLabPackageScanner.IsWithinDirectory(destination, workspace))
+                    throw new InvalidOperationException("A selected input resolved outside the temporary parse workspace.");
+
+                var destinationDirectory = Path.GetDirectoryName(destination);
+                if (!string.IsNullOrWhiteSpace(destinationDirectory))
+                    Directory.CreateDirectory(destinationDirectory);
+                File.Copy(source, destination, true);
+                workspaceToOriginalPath[destination] = source;
+                copied.Add(destination);
+            }
+
+            return copied.ToArray();
+        }
+
+        private static string GetCommonDirectory(string[] files)
+        {
+            if (files == null || files.Length == 0) return Path.GetTempPath();
+            var common = Path.GetDirectoryName(Path.GetFullPath(files[0]));
+            if (string.IsNullOrWhiteSpace(common)) common = Path.GetPathRoot(Path.GetFullPath(files[0]));
+
+            foreach (var file in files.Skip(1))
+            {
+                var directory = Path.GetDirectoryName(Path.GetFullPath(file));
+                while (!string.IsNullOrWhiteSpace(common) &&
+                       !VisualLabPackageScanner.IsWithinDirectory(directory, common))
+                {
+                    var parent = Directory.GetParent(common);
+                    if (parent == null)
+                    {
+                        common = Path.GetPathRoot(common);
+                        break;
+                    }
+                    common = parent.FullName;
+                }
+            }
+
+            return string.IsNullOrWhiteSpace(common) ? Path.GetPathRoot(Path.GetFullPath(files[0])) : common;
+        }
+
+        private static void MergeSplitPartsInWorkspace(string workspace)
+        {
+            // This intentionally mirrors the split-part behavior only inside the disposable workspace.
+            var splitZeroFiles = Directory.GetFiles(workspace, "*.split0", SearchOption.AllDirectories);
+            foreach (var splitZero in splitZeroFiles)
+            {
+                var destinationName = Path.GetFileNameWithoutExtension(splitZero);
+                var directory = Path.GetDirectoryName(splitZero);
+                if (string.IsNullOrWhiteSpace(directory)) continue;
+                var destination = Path.Combine(directory, destinationName);
+                if (File.Exists(destination)) continue;
+
+                var parts = Directory.GetFiles(directory, destinationName + ".split*")
+                    .OrderBy(path =>
+                    {
+                        var extension = Path.GetExtension(path);
+                        var suffix = extension.Length > 6 ? extension.Substring(6) : "";
+                        return int.TryParse(suffix, out var number) ? number : int.MaxValue;
+                    })
+                    .ToArray();
+
+                if (parts.Length == 0) continue;
+                using (var output = new FileStream(destination, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    foreach (var part in parts)
+                    {
+                        using (var input = new FileStream(part, FileMode.Open, FileAccess.Read, FileShare.Read))
+                            input.CopyTo(output);
+                    }
+                }
+            }
+        }
+
+        private static string ResolveOriginalSourcePath(
+            SerializedFile file,
+            Dictionary<string, string> workspaceToOriginalPath,
+            string[] originalInputs,
+            string workspace)
+        {
+            var candidates = new[] { file.originalPath, file.fullName };
+            foreach (var candidate in candidates)
+            {
+                if (string.IsNullOrWhiteSpace(candidate)) continue;
+                try
+                {
+                    var full = Path.GetFullPath(candidate);
+                    if (workspaceToOriginalPath.TryGetValue(full, out var original))
+                        return original;
+                }
+                catch { }
+            }
+
+            var name = Path.GetFileName(file.originalPath ?? "");
+            if (string.IsNullOrWhiteSpace(name)) name = Path.GetFileName(file.fullName ?? "");
+            var matches = originalInputs
+                .Where(path => string.Equals(Path.GetFileName(path), name, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (matches.Length == 1) return matches[0];
+
+            return originalInputs.FirstOrDefault() ?? "";
         }
 
         private static Dictionary<string, SerializedFile> BuildFileLookup(IEnumerable<SerializedFile> files)
