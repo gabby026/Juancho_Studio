@@ -43,6 +43,7 @@ namespace AssetStudioGUI
         private BundleParseState _state;
         private string _currentBundle;
         private List<UnityObject> _bundleObjects = new List<UnityObject>();
+        private List<UnparsedEntryView> _bundleUnparsedEntries = new List<UnparsedEntryView>();
         private HashSet<UnityObject> _bundleObjectSet = new HashSet<UnityObject>();
         private bool _loading;
 
@@ -85,8 +86,8 @@ namespace AssetStudioGUI
                 }
             };
             _search.TextChanged += (s, e) => PopulateAllObjectsTree();
-            _hierarchyTree.AfterSelect += (s, e) => SelectObject(e.Node?.Tag as UnityObject);
-            _objectsTree.AfterSelect += (s, e) => SelectObject(e.Node?.Tag as UnityObject);
+            _hierarchyTree.AfterSelect += (s, e) => SelectTreeTag(e.Node?.Tag);
+            _objectsTree.AfterSelect += (s, e) => SelectTreeTag(e.Node?.Tag);
         }
 
         private sealed class BundleChoice
@@ -94,6 +95,26 @@ namespace AssetStudioGUI
             public string Path { get; }
             public BundleChoice(string path) { Path = path; }
             public override string ToString() => System.IO.Path.GetFileName(Path) + "   (" + Path + ")";
+        }
+
+        private sealed class UnparsedEntryView
+        {
+            public SerializedFile File;
+            public ObjectInfo Info;
+            public string SourcePath = "";
+            public string ClassName
+            {
+                get
+                {
+                    try
+                    {
+                        if (Enum.IsDefined(typeof(ClassIDType), Info.classID))
+                            return ((ClassIDType)Info.classID).ToString();
+                    }
+                    catch { }
+                    return "UnknownClassID_" + Info.classID;
+                }
+            }
         }
 
         private sealed class BundleParseState
@@ -331,9 +352,11 @@ namespace AssetStudioGUI
         private void PopulateCurrentBundle()
         {
             if (_state == null || string.IsNullOrWhiteSpace(_currentBundle)) return;
-            _bundleObjects = _state.Files
+            var targetFiles = _state.Files
                 .Where(file => _state.SourceByFile.TryGetValue(file, out var source) &&
                     string.Equals(SafeFullPath(source), SafeFullPath(_currentBundle), StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            _bundleObjects = targetFiles
                 .SelectMany(file => file.Objects ?? new List<UnityObject>())
                 .Where(obj => obj != null)
                 .GroupBy(ObjectIdentity, StringComparer.OrdinalIgnoreCase)
@@ -342,6 +365,22 @@ namespace AssetStudioGUI
                 .ThenBy(GetObjectName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(obj => obj.m_PathID).ToList();
             _bundleObjectSet = new HashSet<UnityObject>(_bundleObjects);
+
+            _bundleUnparsedEntries.Clear();
+            foreach (var file in targetFiles)
+            {
+                var parsedPathIds = new HashSet<long>((file.Objects ?? new List<UnityObject>()).Select(obj => obj.m_PathID));
+                foreach (var info in file.m_Objects ?? new List<ObjectInfo>())
+                {
+                    if (info == null || parsedPathIds.Contains(info.m_PathID)) continue;
+                    _bundleUnparsedEntries.Add(new UnparsedEntryView
+                    {
+                        File = file,
+                        Info = info,
+                        SourcePath = _state.SourceByFile.TryGetValue(file, out var source) ? source : ""
+                    });
+                }
+            }
 
             _hierarchyTree.BeginUpdate();
             try
@@ -391,11 +430,8 @@ namespace AssetStudioGUI
             var materials = _bundleObjects.OfType<Material>().Count();
             var textures = _bundleObjects.OfType<Texture2D>().Count();
             var clips = _bundleObjects.OfType<AnimationClip>().Count();
-            var targetSerializedFiles = _state.Files.Where(f => _state.SourceByFile.TryGetValue(f, out var src) &&
-                string.Equals(SafeFullPath(src), SafeFullPath(_currentBundle), StringComparison.OrdinalIgnoreCase)).ToArray();
-            var selectedFileCount = targetSerializedFiles.Length;
-            var unparsedForBundle = targetSerializedFiles.Sum(f =>
-                Math.Max(0, (f.m_Objects?.Count ?? 0) - (f.Objects?.Count ?? 0)));
+            var selectedFileCount = targetFiles.Length;
+            var unparsedForBundle = _bundleUnparsedEntries.Count;
             _status.Text = string.Format(
                 "{0} · serialized files: {1} · parsed objects: {2:N0} · GameObjects: {3:N0} · Transforms/bones: {4:N0} · Renderers: {5:N0} · Meshes: {6:N0} · Materials: {7:N0} · Texture2D: {8:N0} · AnimationClips: {9:N0} · unparsed entries in this bundle: {10:N0}",
                 Path.GetFileName(_currentBundle), selectedFileCount, _bundleObjects.Count, gameObjects, transformsCount,
@@ -555,7 +591,14 @@ namespace AssetStudioGUI
             try
             {
                 _objectsTree.Nodes.Clear();
-                var root = new TreeNode("All Bundle Objects (" + visible.Count.ToString("N0") + " / " + _bundleObjects.Count.ToString("N0") + ")");
+                var filterText = filter;
+                var visibleRaw = string.IsNullOrEmpty(filterText) ? _bundleUnparsedEntries : _bundleUnparsedEntries.Where(entry =>
+                    entry.ClassName.IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    entry.Info.m_PathID.ToString().IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    entry.Info.classID.ToString().IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    entry.Info.typeID.ToString().IndexOf(filterText, StringComparison.OrdinalIgnoreCase) >= 0).ToList();
+                var root = new TreeNode("Bundle Objects: parsed " + visible.Count.ToString("N0") + "/" + _bundleObjects.Count.ToString("N0") +
+                    " · unparsed serialized entries " + visibleRaw.Count.ToString("N0") + "/" + _bundleUnparsedEntries.Count.ToString("N0"));
                 _objectsTree.Nodes.Add(root);
                 foreach (var group in visible.GroupBy(obj => obj.type.ToString()).OrderBy(group => group.Key, StringComparer.OrdinalIgnoreCase))
                 {
@@ -568,9 +611,55 @@ namespace AssetStudioGUI
                             ToolTipText = ObjectTooltip(obj)
                         });
                 }
+
+                if (visibleRaw.Count > 0)
+                {
+                    var rawGroup = new TreeNode("Unparsed serialized entries (" + visibleRaw.Count.ToString("N0") + ")");
+                    root.Nodes.Add(rawGroup);
+                    foreach (var entry in visibleRaw.OrderBy(x => x.ClassName, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.Info.m_PathID))
+                        rawGroup.Nodes.Add(new TreeNode(entry.ClassName + "   [Path ID " + entry.Info.m_PathID + " · " + entry.Info.byteSize + " bytes]")
+                        {
+                            Tag = entry,
+                            ToolTipText = "AssetStudio did not instantiate a managed object for this serialized entry. Offset: " +
+                                entry.Info.byteStart + ", type ID: " + entry.Info.typeID + ", source: " + Path.GetFileName(entry.SourcePath)
+                        });
+                    rawGroup.Expand();
+                }
                 root.Expand();
             }
             finally { _objectsTree.EndUpdate(); }
+        }
+
+        private void SelectTreeTag(object tag)
+        {
+            if (tag is UnityObject obj)
+                SelectObject(obj);
+            else if (tag is UnparsedEntryView raw)
+                SelectUnparsedEntry(raw);
+        }
+
+        private void SelectUnparsedEntry(UnparsedEntryView entry)
+        {
+            if (entry?.Info == null) return;
+            ClearAppearance();
+            var info = entry.Info;
+            _details.Text = string.Join(Environment.NewLine, new[]
+            {
+                "Object status: serialized, not instantiated by AssetStudio",
+                "Unity class ID: " + info.classID + " (" + entry.ClassName + ")",
+                "Serialized type ID: " + info.typeID,
+                "Path ID: " + info.m_PathID,
+                "Serialized file: " + (entry.File?.fileName ?? ""),
+                "Source bundle: " + entry.SourcePath,
+                "Byte offset: " + info.byteStart,
+                "Byte size: " + info.byteSize,
+                "Is destroyed flag: " + info.isDestroyed,
+                "Stripped flag: " + info.stripped,
+                "Type tree available: " + (info.serializedType?.m_Type != null),
+                "",
+                "AssetStudio did not create a typed Unity object for this entry, so this inspector cannot safely treat it as a GameObject, bone, Mesh, Material, Texture2D, or AnimationClip. The original serialized entry is listed here rather than hidden."
+            });
+            _textureInfo.Text = "This raw object entry has no decoded Texture2D object to preview.";
         }
 
         private void SelectObject(UnityObject obj)
