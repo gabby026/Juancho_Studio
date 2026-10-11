@@ -412,8 +412,6 @@ namespace Juancho.VisualLab
                 throw new InvalidDataException("The Mesh vertex array does not match its declared vertex count.");
 
             var positions = new float[vertexCount * 3];
-            var min = new[] { float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity };
-            var max = new[] { float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity };
             for (var i = 0; i < vertexCount; i++)
             {
                 for (var axis = 0; axis < 3; axis++)
@@ -422,8 +420,6 @@ namespace Juancho.VisualLab
                     if (float.IsNaN(value) || float.IsInfinity(value))
                         throw new InvalidDataException("This Mesh contains a non-finite vertex value.");
                     positions[i * 3 + axis] = value;
-                    min[axis] = Math.Min(min[axis], value);
-                    max[axis] = Math.Max(max[axis], value);
                 }
             }
 
