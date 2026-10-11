@@ -404,7 +404,7 @@ namespace AssetStudioGUI
             using (var dialog = new OpenFileDialog())
             {
                 dialog.Title = "Select one or more Unity bundles or companion assets";
-                dialog.Filter = "Unity and companion assets|*.unity3d;*.bundle;*.assets;*.asset;*.ab;*.ress;*.resource;*.bytes;*.png;*.jpg;*.jpeg;*.tga;*.dds;*.ktx;*.astc;*.pvr|All files|*.*";
+                dialog.Filter = "Unity and companion assets|*.unity3d;*.bundle;*.assets;*.asset;*.ab;*.ress;*.resource;*.bytes;*.png;*.jpg;*.jpeg;*.tga;*.dds;*.ktx;*.astc;*.pvr;*.split*|All files|*.*";
                 dialog.Multiselect = true;
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                     await ScanAsync(dialog.FileNames);
@@ -470,12 +470,8 @@ namespace AssetStudioGUI
                 return;
             }
 
-            var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource"
-            };
             var files = _lastScan.Assets
-                .Where(x => extensions.Contains(x.Extension) && File.Exists(x.FullPath))
+                .Where(x => IsUnityInput(x) && File.Exists(x.FullPath))
                 .Select(x => x.FullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
@@ -552,7 +548,10 @@ namespace AssetStudioGUI
                 case ".resource":
                     return true;
                 default:
-                    return false;
+                    return file.Extension.StartsWith(".split", StringComparison.OrdinalIgnoreCase) &&
+                           file.Extension.Length > 6 &&
+                           file.Extension.Substring(6).All(char.IsDigit);
+
             }
         }
 
