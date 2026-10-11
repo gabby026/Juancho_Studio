@@ -908,6 +908,7 @@ namespace AssetStudioGUI
         private readonly ComboBox _skinBundleCombo = new ComboBox();
         private readonly ComboBox _rootCombo = new ComboBox();
         private readonly ComboBox _clipCombo = new ComboBox();
+        private bool _loadingChoices;
         private readonly Button _loadButton = new Button();
         private readonly Button _playButton = new Button { Text = "Play", AutoSize = true };
         private readonly Button _stopButton = new Button { Text = "Stop", AutoSize = true };
@@ -1004,12 +1005,22 @@ namespace AssetStudioGUI
 
             top.Controls.Add(new Label { Text = "Model root (GameObject):", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
             _rootCombo.DropDownStyle = ComboBoxStyle.DropDownList; _rootCombo.Width = 370;
-            _rootCombo.SelectedIndexChanged += (s, e) => UpdateLoadEnabled();
+            _rootCombo.SelectedIndexChanged += async (s, e) =>
+            {
+                UpdateLoadEnabled();
+                if (!_loadingChoices && _scene != null && _rootCombo.SelectedItem is AssetChoice && _clipCombo.SelectedItem is AssetChoice)
+                    await LoadPreviewAsync();
+            };
             top.Controls.Add(_rootCombo);
 
-            top.Controls.Add(new Label { Text = "AnimationClip:", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
-            _clipCombo.DropDownStyle = ComboBoxStyle.DropDownList; _clipCombo.Width = 370;
-            _clipCombo.SelectedIndexChanged += (s, e) => UpdateLoadEnabled();
+            top.Controls.Add(new Label { Text = "AnimationClip list (select to play):", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
+            _clipCombo.DropDownStyle = ComboBoxStyle.DropDownList; _clipCombo.Width = 420;
+            _clipCombo.SelectedIndexChanged += async (s, e) =>
+            {
+                UpdateLoadEnabled();
+                if (!_loadingChoices && _scene != null && _rootCombo.SelectedItem is AssetChoice && _clipCombo.SelectedItem is AssetChoice)
+                    await LoadPreviewAsync();
+            };
             top.Controls.Add(_clipCombo);
 
             _loadButton.Text = "Load Model + Clip"; _loadButton.AutoSize = true;
@@ -1073,6 +1084,7 @@ namespace AssetStudioGUI
         {
             var previousRoot = (_rootCombo.SelectedItem as AssetChoice)?.Item.Key;
             var previousClip = (_clipCombo.SelectedItem as AssetChoice)?.Item.Key;
+            _loadingChoices = true;
             _rootCombo.BeginUpdate(); _clipCombo.BeginUpdate();
             try
             {
@@ -1081,6 +1093,7 @@ namespace AssetStudioGUI
                 if (string.IsNullOrWhiteSpace(bundle))
                 {
                     _loadButton.Enabled = false;
+                    _scene = null;
                     _status.Text = "No hero_<heroname>_skin.unity3d selected.";
                     return;
                 }
@@ -1116,16 +1129,17 @@ namespace AssetStudioGUI
                 if (rootIndex >= 0) _rootCombo.SelectedIndex = rootIndex;
                 if (clipIndex >= 0) _clipCombo.SelectedIndex = clipIndex;
 
-                bool hasMesh = bundleAssets.Any(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase));
+                int meshCount = bundleAssets.Count(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase));
                 _status.Text = System.IO.Path.GetFileName(bundle) + " · " + roots.Length + " GameObjects · " +
-                    bundleAssets.Count(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase)) + " Meshes · " +
-                    clips.Length + " AnimationClips" +
-                    (hasMesh && roots.Length > 0 && clips.Length > 0 ? "" : " — this bundle is missing one or more required object types");
+                    meshCount + " Meshes · " + clips.Length + " AnimationClips" +
+                    (meshCount > 0 && roots.Length > 0 && clips.Length > 0 ? " — select a clip to preview it" : " — missing one or more required object types in this hero skin bundle");
+                _scene = null;
                 UpdateLoadEnabled();
             }
             finally
             {
                 _rootCombo.EndUpdate(); _clipCombo.EndUpdate();
+                _loadingChoices = false;
             }
         }
 
