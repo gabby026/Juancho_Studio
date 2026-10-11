@@ -190,7 +190,7 @@ namespace AssetStudioGUI
             _roleFilter.SelectedIndex = 0;
             _roleFilter.SelectedIndexChanged += RoleFilter_SelectedIndexChanged;
             toolbar.Controls.Add(_roleFilter);
-            _previewMeshButton.Text = "Preview Selected Mesh (static)";
+            _previewMeshButton.Text = "Preview Selected Model / Mesh (static)";
             _previewMeshButton.AutoSize = true;
             _previewMeshButton.Enabled = false;
             _previewMeshButton.Click += async (s, e) => await PreviewSelectedMeshAsync();
@@ -344,16 +344,19 @@ namespace AssetStudioGUI
         {
             var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
             _previewMeshButton.Enabled = selected != null &&
-                string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase) &&
+                (string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(selected.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase)) &&
                 _lastUnityIndex != null;
         }
 
         private async Task PreviewSelectedMeshAsync()
         {
             var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
-            if (selected == null || !string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase))
+            var isMesh = selected != null && string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase);
+            var isGameObject = selected != null && string.Equals(selected.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase);
+            if (!isMesh && !isGameObject)
             {
-                MessageBox.Show(this, "Select an object whose Unity class is Mesh. Renderer and GameObject hierarchy previews are not connected in this step.",
+                MessageBox.Show(this, "Select a Unity Mesh or GameObject. GameObject preview assembles available child MeshFilter and SkinnedMeshRenderer geometry in static form; animation and materials are not active.",
                     "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 return;
             }
@@ -371,7 +374,9 @@ namespace AssetStudioGUI
             _detailLabel.Text = selected.Name;
             try
             {
-                var preview = await VisualLabUnityIndexer.ExtractMeshPreviewAsync(_lastUnityIndex.InputFiles, selected);
+                var preview = isMesh
+                    ? await VisualLabUnityIndexer.ExtractMeshPreviewAsync(_lastUnityIndex.InputFiles, selected)
+                    : await VisualLabUnityIndexer.ExtractGameObjectPreviewAsync(_lastUnityIndex.InputFiles, selected);
                 using (var previewForm = new JuanchoVisualLabMeshPreviewForm(preview))
                     previewForm.ShowDialog(this);
                 _statusLabel.Text = "Static mesh preview closed";
