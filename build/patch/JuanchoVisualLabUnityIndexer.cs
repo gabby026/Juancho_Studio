@@ -1,6 +1,7 @@
 using AssetStudio;
 using System;
 using System.Collections;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -71,6 +72,7 @@ namespace Juancho.VisualLab
         private static readonly FieldInfo PPtrFileIdField = typeof(PPtr<UnityObject>).GetField("m_FileID", InstanceFields);
         private static readonly FieldInfo PPtrPathIdField = typeof(PPtr<UnityObject>).GetField("m_PathID", InstanceFields);
         private static readonly FieldInfo PPtrAssetsFileField = typeof(PPtr<UnityObject>).GetField("assetsFile", InstanceFields);
+        private static readonly ConcurrentDictionary<Type, bool> PointerContainmentCache = new ConcurrentDictionary<Type, bool>();
 
         public static Task<VisualLabUnityIndexResult> AnalyzeFilesAsync(IEnumerable<string> paths)
         {
@@ -394,6 +396,9 @@ namespace Juancho.VisualLab
                 return;
             }
 
+            // Avoid walking enormous vertex, color, and keyframe arrays when their declared
+            // types cannot contain any PPtr<T> fields. This keeps large hero bundles tractable.
+            if (!CanContainPointers(type)) return;
             if (!type.IsValueType && !visited.Add(value)) return;
 
             if (value is IEnumerable enumerable && !(value is string))
@@ -441,6 +446,59 @@ namespace Juancho.VisualLab
                     CollectPointers(child, childType, sourceItem, owningFile, fileLookup, assetLookup, dependencies, visited, path, depth + 1);
                 }
                 current = current.BaseType;
+            }
+        }
+
+        private static bool CanContainPointers(Type type)
+        {
+            if (type == null) return false;
+            return PointerContainmentCache.GetOrAdd(type, candidate => CanContainPointersCore(candidate, new HashSet<Type>()));
+        }
+
+        private static bool CanContainPointersCore(Type type, HashSet<Type> visiting)
+        {
+            if (type == null || type.IsPrimitive || type.IsEnum || type == typeof(string) ||
+                type == typeof(decimal) || type == typeof(DateTime))
+                return false;
+            if (IsPPtr(type)) return true;
+
+            if (type.IsArray)
+                return CanContainPointersCore(type.GetElementType(), visiting);
+
+            if (typeof(IEnumerable).IsAssignableFrom(type) && type.IsGenericType)
+                return type.GetGenericArguments().Any(argument => CanContainPointersCore(argument, visiting));
+
+            if (!type.IsValueType && type.Namespace != "AssetStudio")
+                return false;
+            if (!visiting.Add(type)) return false;
+
+            try
+            {
+                var current = type;
+                while (current != null && current != typeof(UnityObject) && current != typeof(object))
+                {
+                    if (current.Namespace == "System" || current.Namespace == "System.Collections" ||
+                        current.Namespace == "System.Collections.Generic")
+                        break;
+
+                    foreach (var field in current.GetFields(InstanceFields | BindingFlags.DeclaredOnly))
+                    {
+                        if (field.IsStatic || field.Name == "reader" || field.Name == "assetsFile" ||
+                            field.Name == "assetsManager" || field.Name == "serializedType" ||
+                            field.Name == "version" || field.Name == "buildType" || field.Name == "platform" ||
+                            field.Name == "m_PathID" || field.Name == "byteSize" || field.Name == "m_CachedPtr")
+                            continue;
+
+                        if (CanContainPointersCore(field.FieldType, visiting))
+                            return true;
+                    }
+                    current = current.BaseType;
+                }
+                return false;
+            }
+            finally
+            {
+                visiting.Remove(type);
             }
         }
 
