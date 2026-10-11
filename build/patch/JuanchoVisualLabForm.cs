@@ -19,8 +19,12 @@ namespace AssetStudioGUI
     {
         private readonly DataGridView _assetGrid = new DataGridView();
         private readonly DataGridView _timelineGrid = new DataGridView();
+        private readonly DataGridView _unityObjectGrid = new DataGridView();
+        private readonly DataGridView _dependencyGrid = new DataGridView();
         private readonly BindingList<VisualLabAssetFile> _assetItems = new BindingList<VisualLabAssetFile>();
         private readonly BindingList<VisualLabTimelineEvent> _timelineItems = new BindingList<VisualLabTimelineEvent>();
+        private readonly BindingList<VisualLabUnityAssetItem> _unityObjectItems = new BindingList<VisualLabUnityAssetItem>();
+        private readonly BindingList<VisualLabUnityDependency> _dependencyItems = new BindingList<VisualLabUnityDependency>();
         private readonly Label _scanStatus = new Label();
         private readonly Label _runtimeStatus = new Label();
         private readonly TextBox _sequenceTitle = new TextBox();
@@ -32,8 +36,10 @@ namespace AssetStudioGUI
         private readonly Button _scanFilesButton = new Button();
         private readonly Button _exportReportButton = new Button();
         private readonly Button _cancelButton = new Button();
+        private readonly Button _analyzeObjectsButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
+        private VisualLabUnityIndexResult _lastUnityIndex;
         private string _selectedAssetPath = "";
         private readonly List<string> _protectedSourceRoots = new List<string>();
 
@@ -47,13 +53,16 @@ namespace AssetStudioGUI
 
             var tabs = new TabControl { Dock = DockStyle.Fill };
             var packageTab = new TabPage("Package Explorer");
+            var objectsTab = new TabPage("Serialized Objects");
             var timelineTab = new TabPage("Skill Timeline");
             var runtimeTab = new TabPage("Runtime Status");
             tabs.TabPages.Add(packageTab);
+            tabs.TabPages.Add(objectsTab);
             tabs.TabPages.Add(timelineTab);
             tabs.TabPages.Add(runtimeTab);
 
             packageTab.Controls.Add(BuildPackageTab());
+            objectsTab.Controls.Add(BuildSerializedObjectsTab());
             timelineTab.Controls.Add(BuildTimelineTab());
             runtimeTab.Controls.Add(BuildRuntimeTab());
 
