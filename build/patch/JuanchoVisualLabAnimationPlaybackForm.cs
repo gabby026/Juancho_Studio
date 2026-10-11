@@ -413,7 +413,7 @@ namespace Juancho.VisualLab
             scene.SampleRate = clip.m_SampleRate > 0 && IsFinite(clip.m_SampleRate) ? clip.m_SampleRate : 30;
 
             var embeddedClip = clip.m_MuscleClip?.m_Clip;
-            List<AssetStudio.StreamedFrame> streamedFrames = null;
+            List<AssetStudio.StreamedClip.StreamedFrame> streamedFrames = null;
             string extractionNote = "";
             try
             {
