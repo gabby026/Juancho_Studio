@@ -187,7 +187,7 @@ namespace AssetStudioGUI
             _roleFilter.Width = 250;
             _roleFilter.Items.Add("All roles");
             _roleFilter.SelectedIndex = 0;
-            _roleFilter.SelectedIndexChanged += (s, e) => ApplyRoleFilter();
+            _roleFilter.SelectedIndexChanged += RoleFilter_SelectedIndexChanged;
             toolbar.Controls.Add(_roleFilter);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
