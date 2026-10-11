@@ -23,12 +23,12 @@ Current capabilities:
 
 This is a foundation build, **not yet the complete live simulator**. Interactive playback is an initial reconstruction adapter, not a replacement for Unity's full Animator. It does not yet:
 - render recovered materials, textures, UV animation, or the original MLBB shader pipeline;
-- deform skinned meshes using the correct skeleton, bind poses, and animation curves;
-- play AnimationClips in real time;
+- guarantee correct skinned-mesh binding when bone references or dependencies are missing/mismatched; the first CPU skinning adapter is still unvalidated against a real MLBB package;
+- reproduce Unity's exact curve tangents/interpolation, AnimatorControllers, or Humanoid/muscle-only clips requiring Avatar reconstruction;
 - simulate Unity ParticleSystem / TrailRenderer effects;
 - play particle/trail effects or the saved skill timeline as an executable multi-track sequence.
 
-Skinned meshes included by the current static GameObject preview are shown without bone deformation. A listed reference or resolved pointer does not mean an asset is fully renderable or its gameplay behavior is available.
+The separate static Mesh/GameObject preview remains static; use the **Interactive Model + Animation Player** for supported curve playback and best-effort CPU skinning. A listed reference or resolved pointer does not mean an asset is fully renderable or its gameplay behavior is available.
 
 ## Source preservation
 
@@ -38,7 +38,7 @@ Do not use Visual Lab scan/preview actions as a substitute for source backups wh
 
 ## Platform compatibility
 
-MLBB assets commonly come from Android-targeted bundles. Unity AssetBundles are platform-specific, so do not assume a Windows standalone player can load an Android bundle directly. Visual Lab parses serialized data and reconstructs the static geometry subset; shader, texture, and target Unity-version compatibility must be validated for each package.
+MLBB assets commonly come from Android-targeted bundles. Unity AssetBundles are platform-specific, so do not assume a Windows standalone player can load an Android bundle directly. Visual Lab parses serialized data and reconstructs supported model/animation subsets in its desktop preview; shader, texture, skeleton, and target Unity-version compatibility must be validated for each package.
 
 The implementation plan records the runtime approach, acceptance gates, risks, and the review of the external SkinForgeID reference in `docs/MLBB_VISUAL_LAB_IMPLEMENTATION.md` and `docs/REFERENCE_PROJECT_REVIEW.md`.
 
