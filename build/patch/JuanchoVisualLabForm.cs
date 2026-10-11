@@ -176,7 +176,7 @@ namespace AssetStudioGUI
             _objectStatus.AutoSize = true;
             _objectStatus.MaximumSize = new Size(1240, 0);
             _objectStatus.Padding = new Padding(0, 0, 0, 8);
-            _objectStatus.Text = "Scan a package and choose Analyze Unity Bundle Contents to enumerate actual serialized objects and cross-bundle PPtr references."
+            _objectStatus.Text = "Scan a package and choose Analyze Unity Bundle Contents to enumerate actual serialized objects and cross-bundle PPtr references.";
 
             ConfigureUnityObjectGrid();
             ConfigureDependencyGrid();
