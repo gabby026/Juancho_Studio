@@ -168,6 +168,17 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [ ] No source mutation; diagnostics and sample sequence verified.
 - [ ] Document supported/unsupported asset classes.
 
+## Local Nana fixture details
+
+A real integration candidate is present in the local file library: `Default - Nana 10th Anniversary Script - XirenXCC.zip`. Container inspection confirmed 75 archive entries, 58 files ending in `.unity3d`, and sampled bundle headers beginning with `UnityFS` and reporting Unity `2019.4.33f1`. Representative candidates include:
+- `Art/android/h/hero_nana_skin.unity3d` (base hero package)
+- `Art/android/h/hero_nana_skin_high_add.unity3d` (additional hero resources)
+- `Art/android/n/nana_skill01.unity3d` and `nana_skill01_shifa.unity3d`
+- `Art/android/n/nana_skill02.unity3d`, `nana_skill02_shifa.unity3d`, `nana_skill2_hit.unity3d`
+- `Art/android/n/nana_skill03_01.unity3d`, `nana_skill03_shifa.unity3d`, and `nana_skill03_sing.unity3d`
+
+These are filenames and header observations only; no serialized object counts, render tests, animation playback, or effects playback have been measured yet. The full archive is not committed to the repo and is not available to GitHub Actions. Run the packaged Windows tool against a working copy of this fixture for the next validation gate.
+
 ## Real-package test protocol
 
 Use a package that includes the hero/skinned model, one AnimationClip, the necessary rig/bones, a material/texture, and one skill/effect bundle. Keep a pristine copy and record its hash manifest.
