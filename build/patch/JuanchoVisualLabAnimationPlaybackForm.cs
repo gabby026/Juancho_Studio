@@ -903,7 +903,9 @@ namespace AssetStudioGUI
     public sealed class JuanchoVisualLabAnimationPlaybackForm : Form
     {
         private readonly string[] _inputFiles;
+        private readonly string[] _heroSkinBundlePaths;
         private readonly List<Juancho.VisualLab.VisualLabUnityAssetItem> _assets;
+        private readonly ComboBox _skinBundleCombo = new ComboBox();
         private readonly ComboBox _rootCombo = new ComboBox();
         private readonly ComboBox _clipCombo = new ComboBox();
         private readonly Button _loadButton = new Button();
@@ -929,14 +931,59 @@ namespace AssetStudioGUI
         private float _time;
         private bool _wireframe;
 
+        public static bool IsHeroSkinBundlePath(string path)
+        {
+            if (string.IsNullOrWhiteSpace(path)) return false;
+            string name;
+            try { name = Path.GetFileName(path); } catch { return false; }
+            return !string.IsNullOrWhiteSpace(name) &&
+                name.StartsWith("hero_", StringComparison.OrdinalIgnoreCase) &&
+                name.EndsWith("_skin.unity3d", StringComparison.OrdinalIgnoreCase) &&
+                name.Length > "hero__skin.unity3d".Length;
+        }
+
+        public static string[] FindHeroSkinBundlePaths(IEnumerable<string> inputFiles)
+        {
+            return (inputFiles ?? Enumerable.Empty<string>())
+                .Where(path => !string.IsNullOrWhiteSpace(path) && File.Exists(path) && IsHeroSkinBundlePath(path))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        public static bool BundleHasModelAndClip(IEnumerable<Juancho.VisualLab.VisualLabUnityAssetItem> assets, string bundlePath)
+        {
+            if (string.IsNullOrWhiteSpace(bundlePath)) return false;
+            var inBundle = (assets ?? Enumerable.Empty<Juancho.VisualLab.VisualLabUnityAssetItem>())
+                .Where(item => SamePath(item.SourceBundlePath, bundlePath)).ToArray();
+            return inBundle.Any(item => string.Equals(item.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase)) &&
+                inBundle.Any(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase)) &&
+                inBundle.Any(item => string.Equals(item.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool SamePath(string left, string right)
+        {
+            try
+            {
+                return !string.IsNullOrWhiteSpace(left) && !string.IsNullOrWhiteSpace(right) &&
+                    string.Equals(Path.GetFullPath(left), Path.GetFullPath(right), StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
         public JuanchoVisualLabAnimationPlaybackForm(IEnumerable<string> inputFiles, IEnumerable<Juancho.VisualLab.VisualLabUnityAssetItem> assets)
         {
             _inputFiles = (inputFiles ?? Enumerable.Empty<string>()).Where(File.Exists).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             _assets = (assets ?? Enumerable.Empty<Juancho.VisualLab.VisualLabUnityAssetItem>()).ToList();
+            _heroSkinBundlePaths = FindHeroSkinBundlePaths(_inputFiles);
             if (_inputFiles.Length == 0) throw new ArgumentException("Scan a package folder before opening the animation player.", nameof(inputFiles));
+            if (_heroSkinBundlePaths.Length == 0)
+                throw new InvalidDataException("The scanned package does not contain a file named hero_<heroname>_skin.unity3d. The interactive player will not substitute an unrelated bundle.");
+
             Text = "Juancho MLBB Visual Lab — Interactive Model & Animation Player";
             StartPosition = FormStartPosition.CenterParent;
-            Size = new Size(1420, 940);
+            Size = new Size(1480, 940);
             MinimumSize = new Size(1000, 680);
             Font = new System.Drawing.Font("Segoe UI", 9F);
 
@@ -945,32 +992,30 @@ namespace AssetStudioGUI
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var top = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
-            top.Controls.Add(new Label { Text = "Model root (GameObject):", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+
+            top.Controls.Add(new Label { Text = "Hero skin bundle:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            _skinBundleCombo.DropDownStyle = ComboBoxStyle.DropDownList;
+            _skinBundleCombo.Width = 315;
+            foreach (var bundle in _heroSkinBundlePaths)
+                _skinBundleCombo.Items.Add(new SkinBundleChoice(bundle));
+            _skinBundleCombo.SelectedIndexChanged += (s, e) => PopulateModelAndClipChoices();
+            if (_skinBundleCombo.Items.Count > 0) _skinBundleCombo.SelectedIndex = 0;
+            top.Controls.Add(_skinBundleCombo);
+
+            top.Controls.Add(new Label { Text = "Model root (GameObject):", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
             _rootCombo.DropDownStyle = ComboBoxStyle.DropDownList; _rootCombo.Width = 370;
-            foreach (var item in _assets.Where(a => string.Equals(a.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
-                _rootCombo.Items.Add(new AssetChoice(item));
-            if (_rootCombo.Items.Count > 0)
-            {
-                int suggested = Enumerable.Range(0, _rootCombo.Items.Count)
-                    .FirstOrDefault(i => ((AssetChoice)_rootCombo.Items[i]).Item.Name.IndexOf("skin", StringComparison.OrdinalIgnoreCase) >= 0);
-                _rootCombo.SelectedIndex = suggested;
-            }
+            _rootCombo.SelectedIndexChanged += (s, e) => UpdateLoadEnabled();
             top.Controls.Add(_rootCombo);
+
             top.Controls.Add(new Label { Text = "AnimationClip:", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
             _clipCombo.DropDownStyle = ComboBoxStyle.DropDownList; _clipCombo.Width = 370;
-            foreach (var item in _assets.Where(a => string.Equals(a.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(a =>
-                {
-                    var hint = (a.Name + " " + a.SourceBundlePath).ToLowerInvariant();
-                    return hint.Contains("skill") || hint.Contains("ultimate") || hint.Contains("attack") || hint.Contains("spell") ? 1 : 0;
-                })
-                .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
-                _clipCombo.Items.Add(new AssetChoice(item));
-            if (_clipCombo.Items.Count > 0) _clipCombo.SelectedIndex = 0;
+            _clipCombo.SelectedIndexChanged += (s, e) => UpdateLoadEnabled();
+            top.Controls.Add(_clipCombo);
+
             _loadButton.Text = "Load Model + Clip"; _loadButton.AutoSize = true;
             _loadButton.Click += async (s, e) => await LoadPreviewAsync();
             top.Controls.Add(_loadButton);
+            PopulateModelAndClipChoices();
 
             var viewportHost = new Panel { Dock = DockStyle.Fill };
             _gl.Dock = DockStyle.Fill; _gl.BackColor = System.Drawing.Color.FromArgb(20, 23, 30);
@@ -988,7 +1033,7 @@ namespace AssetStudioGUI
             _stopButton.Click += (s, e) => { _playing = false; _timer.Stop(); _clock.Stop(); _playButton.Text = "Play"; _time = 0; UpdateFrame(); };
             _loopCheck.CheckedChanged += (s, e) => UpdateFrame();
             _speedCombo.DropDownStyle = ComboBoxStyle.DropDownList; _speedCombo.Width = 86;
-            foreach (var s in new[] { "0.25x", "0.5x", "1x", "1.5x", "2x" }) _speedCombo.Items.Add(s);
+            foreach (var speed in new[] { "0.25x", "0.5x", "1x", "1.5x", "2x" }) _speedCombo.Items.Add(speed);
             _speedCombo.SelectedIndex = 2;
             var wire = new CheckBox { Text = "Wireframe", AutoSize = true };
             wire.CheckedChanged += (s, e) => { _wireframe = wire.Checked; _gl.Invalidate(); };
@@ -1006,13 +1051,92 @@ namespace AssetStudioGUI
 
             root.Controls.Add(top, 0, 0); root.Controls.Add(viewportHost, 0, 1); root.Controls.Add(bottom, 0, 2);
             Controls.Add(root);
+            _timer.Tick += Timer_Tick;
             Shown += async (s, e) =>
             {
                 if (_rootCombo.SelectedItem != null && _clipCombo.SelectedItem != null)
                     await LoadPreviewAsync();
+                else
+                    _status.Text = "Choose a hero skin bundle that contains a Mesh, GameObject hierarchy, and AnimationClip.";
             };
-            _timer.Tick += Timer_Tick;
-            FormClosed += (s, e) => { _timer.Stop(); _gl.Dispose(); };
+            FormClosed += (s, e) => { _timer.Stop(); _clock.Stop(); _gl.Dispose(); };
+        }
+
+        private sealed class SkinBundleChoice
+        {
+            public string Path { get; }
+            public SkinBundleChoice(string path) { Path = path; }
+            public override string ToString() => System.IO.Path.GetFileName(Path) + "  [" + Path + "]";
+        }
+
+        private void PopulateModelAndClipChoices()
+        {
+            var previousRoot = (_rootCombo.SelectedItem as AssetChoice)?.Item.Key;
+            var previousClip = (_clipCombo.SelectedItem as AssetChoice)?.Item.Key;
+            _rootCombo.BeginUpdate(); _clipCombo.BeginUpdate();
+            try
+            {
+                _rootCombo.Items.Clear(); _clipCombo.Items.Clear();
+                var bundle = (_skinBundleCombo.SelectedItem as SkinBundleChoice)?.Path;
+                if (string.IsNullOrWhiteSpace(bundle))
+                {
+                    _loadButton.Enabled = false;
+                    _status.Text = "No hero_<heroname>_skin.unity3d selected.";
+                    return;
+                }
+
+                var bundleAssets = _assets.Where(item => SamePath(item.SourceBundlePath, bundle)).ToArray();
+                var roots = bundleAssets
+                    .Where(item => string.Equals(item.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(item =>
+                    {
+                        var name = (item.Name ?? "").ToLowerInvariant();
+                        var file = System.IO.Path.GetFileNameWithoutExtension(bundle).ToLowerInvariant();
+                        return name.Contains("skin") || name.Contains("hero_") || name == file ? 1 : 0;
+                    })
+                    .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                var clips = bundleAssets
+                    .Where(item => string.Equals(item.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase))
+                    .OrderByDescending(item =>
+                    {
+                        var hint = ((item.Name ?? "") + " " + bundle).ToLowerInvariant();
+                        return hint.Contains("skill") || hint.Contains("ultimate") || hint.Contains("attack") || hint.Contains("spell") ? 1 : 0;
+                    })
+                    .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+
+                foreach (var item in roots) _rootCombo.Items.Add(new AssetChoice(item));
+                foreach (var item in clips) _clipCombo.Items.Add(new AssetChoice(item));
+
+                int rootIndex = roots.ToList().FindIndex(item => string.Equals(item.Key, previousRoot, StringComparison.OrdinalIgnoreCase));
+                int clipIndex = clips.ToList().FindIndex(item => string.Equals(item.Key, previousClip, StringComparison.OrdinalIgnoreCase));
+                if (rootIndex < 0 && roots.Length > 0) rootIndex = 0;
+                if (clipIndex < 0 && clips.Length > 0) clipIndex = 0;
+                if (rootIndex >= 0) _rootCombo.SelectedIndex = rootIndex;
+                if (clipIndex >= 0) _clipCombo.SelectedIndex = clipIndex;
+
+                bool hasMesh = bundleAssets.Any(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase));
+                _status.Text = System.IO.Path.GetFileName(bundle) + " · " + roots.Length + " GameObjects · " +
+                    bundleAssets.Count(item => string.Equals(item.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase)) + " Meshes · " +
+                    clips.Length + " AnimationClips" +
+                    (hasMesh && roots.Length > 0 && clips.Length > 0 ? "" : " — this bundle is missing one or more required object types");
+                UpdateLoadEnabled();
+            }
+            finally
+            {
+                _rootCombo.EndUpdate(); _clipCombo.EndUpdate();
+            }
+        }
+
+        private void UpdateLoadEnabled()
+        {
+            var bundle = (_skinBundleCombo.SelectedItem as SkinBundleChoice)?.Path;
+            _loadButton.Enabled = !string.IsNullOrWhiteSpace(bundle) &&
+                _rootCombo.SelectedItem is AssetChoice root &&
+                _clipCombo.SelectedItem is AssetChoice clip &&
+                SamePath(root.Item.SourceBundlePath, bundle) &&
+                SamePath(clip.Item.SourceBundlePath, bundle);
         }
 
         private sealed class AssetChoice
