@@ -27,6 +27,8 @@ namespace AssetStudioGUI
         private readonly BindingList<VisualLabUnityDependency> _dependencyItems = new BindingList<VisualLabUnityDependency>();
         private readonly Label _scanStatus = new Label();
         private readonly Label _objectStatus = new Label();
+        private readonly Label _objectCountStatus = new Label();
+        private readonly ComboBox _roleFilter = new ComboBox();
         private readonly Label _runtimeStatus = new Label();
         private readonly TextBox _sequenceTitle = new TextBox();
         private readonly ToolStripProgressBar _progressBar = new ToolStripProgressBar();
@@ -169,14 +171,28 @@ namespace AssetStudioGUI
 
         private Control BuildSerializedObjectsTab()
         {
-            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             _objectStatus.AutoSize = true;
             _objectStatus.MaximumSize = new Size(1240, 0);
             _objectStatus.Padding = new Padding(0, 0, 0, 8);
-            _objectStatus.Text = "Scan a package and choose Analyze Unity Bundle Contents to enumerate actual serialized objects and cross-bundle PPtr references.";
+            _objectStatus.Text = "Scan a package and choose Analyze Unity Bundle Contents to enumerate serialized objects and cross-bundle references.";
+
+            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 0, 0, 6) };
+            toolbar.Controls.Add(new Label { Text = "Asset role:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            _roleFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+            _roleFilter.Width = 250;
+            _roleFilter.Items.Add("All roles");
+            _roleFilter.SelectedIndex = 0;
+            _roleFilter.SelectedIndexChanged += (s, e) => ApplyRoleFilter();
+            toolbar.Controls.Add(_roleFilter);
+            _objectCountStatus.AutoSize = true;
+            _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
+            _objectCountStatus.Text = "No parsed objects";
+            toolbar.Controls.Add(_objectCountStatus);
 
             ConfigureUnityObjectGrid();
             ConfigureDependencyGrid();
@@ -197,7 +213,8 @@ namespace AssetStudioGUI
             split.Panel2MinSize = 120;
 
             root.Controls.Add(_objectStatus, 0, 0);
-            root.Controls.Add(split, 0, 1);
+            root.Controls.Add(toolbar, 0, 1);
+            root.Controls.Add(split, 0, 2);
             return root;
         }
 
@@ -216,6 +233,8 @@ namespace AssetStudioGUI
             _unityObjectGrid.Columns.Clear();
             _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Object name", Width = 220, MinimumWidth = 140 });
             _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ClassName", HeaderText = "Unity class", Width = 150, MinimumWidth = 110 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Role", HeaderText = "Suggested role", Width = 190, MinimumWidth = 150 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PreviewReadiness", HeaderText = "Preview status", Width = 300, MinimumWidth = 220 });
             _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PathId", HeaderText = "Path ID", Width = 100 });
             _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "SerializedFileName", HeaderText = "Serialized file", Width = 230, MinimumWidth = 150 });
             _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "UnityVersion", HeaderText = "Unity version", Width = 120 });
@@ -244,6 +263,75 @@ namespace AssetStudioGUI
             _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetName", HeaderText = "Target object", Width = 220, MinimumWidth = 130 });
             _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetClassName", HeaderText = "Target class", Width = 150 });
             _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Status", HeaderText = "Resolution", Width = 160 });
+        }
+
+        private void RefreshRoleFilterOptions()
+        {
+            _roleFilter.SelectedIndexChanged -= RoleFilter_SelectedIndexChanged;
+            _roleFilter.BeginUpdate();
+            try
+            {
+                _roleFilter.Items.Clear();
+                _roleFilter.Items.Add("All roles");
+                if (_lastUnityIndex != null)
+                {
+                    foreach (var role in _lastUnityIndex.Assets
+                        .Select(x => x.Role)
+                        .Where(x => !string.IsNullOrWhiteSpace(x))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase))
+                        _roleFilter.Items.Add(role);
+                }
+                _roleFilter.SelectedIndex = 0;
+            }
+            finally
+            {
+                _roleFilter.EndUpdate();
+                _roleFilter.SelectedIndexChanged += RoleFilter_SelectedIndexChanged;
+            }
+        }
+
+        private void RoleFilter_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            ApplyRoleFilter();
+        }
+
+        private void ApplyRoleFilter()
+        {
+            var previous = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            var previousKey = previous?.Key;
+            _unityObjectItems.Clear();
+
+            var all = _lastUnityIndex?.Assets ?? new List<VisualLabUnityAssetItem>();
+            var selectedRole = _roleFilter.SelectedItem as string;
+            var visible = string.IsNullOrWhiteSpace(selectedRole) || selectedRole == "All roles"
+                ? all
+                : all.Where(x => string.Equals(x.Role, selectedRole, StringComparison.OrdinalIgnoreCase)).ToList();
+
+            foreach (var item in visible)
+                _unityObjectItems.Add(item);
+
+            _objectCountStatus.Text = _lastUnityIndex == null
+                ? "No parsed objects"
+                : string.Format("{0:N0} shown / {1:N0} objects", _unityObjectItems.Count, _lastUnityIndex.Assets.Count);
+
+            if (_unityObjectItems.Count == 0)
+            {
+                _dependencyItems.Clear();
+                return;
+            }
+
+            var rowIndex = previousKey == null
+                ? -1
+                : _unityObjectItems.ToList().FindIndex(x => string.Equals(x.Key, previousKey, StringComparison.OrdinalIgnoreCase));
+            if (rowIndex < 0) rowIndex = 0;
+
+            if (_unityObjectGrid.Rows.Count > rowIndex)
+            {
+                _unityObjectGrid.ClearSelection();
+                _unityObjectGrid.Rows[rowIndex].Selected = true;
+                _unityObjectGrid.CurrentCell = _unityObjectGrid.Rows[rowIndex].Cells[0];
+            }
         }
 
         private void RefreshDependenciesForSelectedObject()
@@ -495,7 +583,8 @@ namespace AssetStudioGUI
             {
                 var result = await VisualLabUnityIndexer.AnalyzeFilesAsync(files);
                 _lastUnityIndex = result;
-                foreach (var item in result.Assets) _unityObjectItems.Add(item);
+                RefreshRoleFilterOptions();
+                ApplyRoleFilter();
                 _objectStatus.Text = string.Format(
                     "Loaded {0} serialized files · Indexed {1} objects · {2} references resolved · {3} unresolved references · {4} ms. Source bundles were opened read-only.",
                     result.SerializedFileCount, result.Assets.Count, result.ResolvedDependencyCount,
@@ -517,6 +606,8 @@ namespace AssetStudioGUI
                     _unityObjectGrid.Rows[0].Selected = true;
                     _unityObjectGrid.CurrentCell = _unityObjectGrid.Rows[0].Cells[0];
                     RefreshDependenciesForSelectedObject();
+                } else {
+                    _dependencyItems.Clear();
                 }
             }
             catch (Exception ex)
