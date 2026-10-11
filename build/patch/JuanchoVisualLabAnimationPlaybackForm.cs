@@ -11,8 +11,6 @@ using System.Windows.Forms;
 using AssetStudio;
 using OpenTK.Graphics.OpenGL;
 using OpenTK.Mathematics;
-using OpenTK.Windowing.Common;
-using OpenTK.Windowing.Desktop;
 using UnityObject = AssetStudio.Object;
 using NMatrix = System.Numerics.Matrix4x4;
 using NQuaternion = System.Numerics.Quaternion;
@@ -650,7 +648,7 @@ namespace AssetStudioGUI
         private int _positionLocation, _normalLocation, _modelLocation, _viewLocation, _projectionLocation;
         private int _leftMouseX, _leftMouseY;
         private bool _rotating, _panning;
-        private float _yaw = -0.55f, _pitch = -0.32f, _distance = 3.2f, _panX, _panY;
+        private float _yaw = -0.55f, _pitch = -0.32f, _distance = 3.2f, _panX, _panY, _panZ;
         private float _time;
         private bool _wireframe;
 
@@ -750,6 +748,7 @@ namespace AssetStudioGUI
                 _scene = await Juancho.VisualLab.VisualLabAnimationPlaybackLoader.LoadAsync(_inputFiles, root.Item, clip.Item);
                 _time = 0; _playing = false; _timer.Stop();
                 _scene.Evaluate(0, _loopCheck.Checked);
+                FitViewToScene();
                 UpdateFrame();
                 if (_glReady) UploadDynamicBuffers();
                 _status.Text = _scene.ModelName + " · " + _scene.ClipName + " · " +
@@ -822,11 +821,11 @@ void main(){ vec3 N=normalize(vNormal); vec3 L=normalize(vec3(0.45,0.8,0.35)); f
             if (!_glReady || _scene == null || _vao == 0) return;
             _gl.MakeCurrent(); GL.BindVertexArray(_vao);
             GL.BindBuffer(BufferTarget.ArrayBuffer, _positionBuffer);
-            GL.BufferData(BufferTarget.ArrayBuffer, _scene.Positions.Length * sizeof(float), _scene.Positions, BufferUsageHint.DynamicDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(_scene.Positions.Length * sizeof(float)), _scene.Positions, BufferUsageHint.DynamicDraw);
             GL.BindBuffer(BufferTarget.ArrayBuffer, _normalBuffer);
-            GL.BufferData(BufferTarget.ArrayBuffer, _scene.Normals.Length * sizeof(float), _scene.Normals, BufferUsageHint.DynamicDraw);
+            GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(_scene.Normals.Length * sizeof(float)), _scene.Normals, BufferUsageHint.DynamicDraw);
             GL.BindBuffer(BufferTarget.ElementArrayBuffer, _indexBuffer);
-            GL.BufferData(BufferTarget.ElementArrayBuffer, _scene.Indices.Length * sizeof(uint), _scene.Indices, BufferUsageHint.DynamicDraw);
+            GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(_scene.Indices.Length * sizeof(uint)), _scene.Indices, BufferUsageHint.DynamicDraw);
             GL.BindVertexArray(0);
         }
 
@@ -877,8 +876,8 @@ void main(){ vec3 N=normalize(vNormal); vec3 L=normalize(vec3(0.45,0.8,0.35)); f
             float aspect = Math.Max(0.1f, _gl.Width / (float)Math.Max(1, _gl.Height));
             var eye = new OpenTK.Mathematics.Vector3(_panX + (float)(Math.Cos(_yaw) * Math.Cos(_pitch) * _distance),
                 _panY + (float)(Math.Sin(_pitch) * _distance),
-                (float)(Math.Sin(_yaw) * Math.Cos(_pitch) * _distance));
-            var view = Matrix4.LookAt(eye, new OpenTK.Mathematics.Vector3(_panX, _panY, 0), OpenTK.Mathematics.Vector3.UnitY);
+                _panZ + (float)(Math.Sin(_yaw) * Math.Cos(_pitch) * _distance));
+            var view = Matrix4.LookAt(eye, new OpenTK.Mathematics.Vector3(_panX, _panY, _panZ), OpenTK.Mathematics.Vector3.UnitY);
             var projection = Matrix4.CreatePerspectiveFieldOfView(MathHelper.DegreesToRadians(42), aspect, 0.01f, 10000f);
             var identity = Matrix4.Identity;
             GL.UniformMatrix4(_modelLocation, false, ref identity); GL.UniformMatrix4(_viewLocation, false, ref view); GL.UniformMatrix4(_projectionLocation, false, ref projection);
@@ -913,6 +912,24 @@ void main(){ vec3 N=normalize(vNormal); vec3 L=normalize(vec3(0.45,0.8,0.35)); f
             _distance = Math.Max(0.05f, Math.Min(5000f, _distance * (e.Delta > 0 ? 0.88f : 1.14f))); _gl.Invalidate();
         }
 
-        private void ResetView() { _yaw = -0.55f; _pitch = -0.32f; _distance = 3.2f; _panX = _panY = 0; _gl.Invalidate(); }
+        private void FitViewToScene()
+        {
+            if (_scene == null || _scene.Positions.Length < 3) return;
+            float minX = float.PositiveInfinity, minY = float.PositiveInfinity, minZ = float.PositiveInfinity;
+            float maxX = float.NegativeInfinity, maxY = float.NegativeInfinity, maxZ = float.NegativeInfinity;
+            for (int i = 0; i + 2 < _scene.Positions.Length; i += 3)
+            {
+                float x = _scene.Positions[i], y = _scene.Positions[i + 1], z = _scene.Positions[i + 2];
+                if (float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(y) || float.IsInfinity(y) || float.IsNaN(z) || float.IsInfinity(z)) continue;
+                minX = Math.Min(minX, x); minY = Math.Min(minY, y); minZ = Math.Min(minZ, z);
+                maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y); maxZ = Math.Max(maxZ, z);
+            }
+            if (float.IsInfinity(minX)) return;
+            _panX = (minX + maxX) * 0.5f; _panY = (minY + maxY) * 0.5f; _panZ = (minZ + maxZ) * 0.5f;
+            float diameter = (float)Math.Sqrt((maxX-minX)*(maxX-minX) + (maxY-minY)*(maxY-minY) + (maxZ-minZ)*(maxZ-minZ));
+            _distance = Math.Max(0.25f, Math.Min(5000f, Math.Max(0.5f, diameter) * 1.55f));
+        }
+
+        private void ResetView() { _yaw = -0.55f; _pitch = -0.32f; if (_scene != null) FitViewToScene(); else { _distance = 3.2f; _panX = _panY = _panZ = 0; } _gl.Invalidate(); }
     }
 }
