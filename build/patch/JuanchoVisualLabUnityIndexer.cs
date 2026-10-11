@@ -60,6 +60,56 @@ namespace Juancho.VisualLab
         public uint[] Indices { get; set; } = Array.Empty<uint>();
     }
 
+    public sealed class VisualLabAnimationCurveSummary
+    {
+        public string Channel { get; set; } = "";
+        public string BindingPath { get; set; } = "";
+        public string Attribute { get; set; } = "";
+        public int KeyCount { get; set; }
+        public float? FirstKeySeconds { get; set; }
+        public float? LastKeySeconds { get; set; }
+        public string Notes { get; set; } = "";
+    }
+
+    public sealed class VisualLabAnimationEventSummary
+    {
+        public float TimeSeconds { get; set; }
+        public string FunctionName { get; set; } = "";
+        public string Data { get; set; } = "";
+        public float FloatParameter { get; set; }
+        public int IntParameter { get; set; }
+        public long ObjectReferencePathId { get; set; }
+    }
+
+    public sealed class VisualLabAnimationClipInfo
+    {
+        public string Name { get; set; } = "";
+        public string SourceBundlePath { get; set; } = "";
+        public long PathId { get; set; }
+        public string UnityVersion { get; set; } = "";
+        public string Platform { get; set; } = "";
+        public float SampleRate { get; set; }
+        public float DurationSeconds { get; set; }
+        public int WrapMode { get; set; }
+        public bool Legacy { get; set; }
+        public bool Compressed { get; set; }
+        public bool HighQualityCurve { get; set; }
+        public bool HasMuscleClip { get; set; }
+        public bool MuscleClipLoops { get; set; }
+        public int BindingCount { get; set; }
+        public int PositionCurveCount { get; set; }
+        public int RotationCurveCount { get; set; }
+        public int EulerCurveCount { get; set; }
+        public int ScaleCurveCount { get; set; }
+        public int FloatCurveCount { get; set; }
+        public int CompressedRotationCurveCount { get; set; }
+        public int PPtrCurveCount { get; set; }
+        public int EventCount { get; set; }
+        public string PlaybackReadiness { get; set; } = "";
+        public List<VisualLabAnimationCurveSummary> Curves { get; set; } = new List<VisualLabAnimationCurveSummary>();
+        public List<VisualLabAnimationEventSummary> Events { get; set; } = new List<VisualLabAnimationEventSummary>();
+    }
+
     public sealed class VisualLabUnityIndexDiagnostic
     {
         public string Severity { get; set; } = "Info";
@@ -336,6 +386,210 @@ namespace Juancho.VisualLab
         private static bool ContainsAny(string value, params string[] candidates)
         {
             return candidates.Any(candidate => value.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        public static Task<VisualLabAnimationClipInfo> InspectAnimationClipAsync(
+            IEnumerable<string> paths,
+            VisualLabUnityAssetItem selectedAsset)
+        {
+            if (selectedAsset == null) throw new ArgumentNullException(nameof(selectedAsset));
+            if (!string.Equals(selectedAsset.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Select a serialized AnimationClip to inspect its curve and event data.", nameof(selectedAsset));
+
+            var files = (paths ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x) && File.Exists(x))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (files.Length == 0)
+                throw new ArgumentException("No source bundle files are available for AnimationClip inspection.", nameof(paths));
+
+            return Task.Run(() => InspectAnimationClip(files, selectedAsset));
+        }
+
+        private static VisualLabAnimationClipInfo InspectAnimationClip(string[] files, VisualLabUnityAssetItem selectedAsset)
+        {
+            var manager = new AssetsManager();
+            var workspace = Path.Combine(Path.GetTempPath(), "JuanchoMLBBVisualLab", Guid.NewGuid().ToString("N"));
+            var workspaceToOriginalPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                Directory.CreateDirectory(workspace);
+                var isolatedFiles = CopyInputsToWorkspace(files, workspace, workspaceToOriginalPath);
+                MergeSplitPartsInWorkspace(workspace);
+                manager.LoadFiles(isolatedFiles);
+
+                var intendedPath = Path.GetFullPath(selectedAsset.SourceBundlePath ?? "");
+                foreach (var serializedFile in manager.assetsFileList)
+                {
+                    var originalPath = ResolveOriginalSourcePath(serializedFile, workspaceToOriginalPath, files, workspace);
+                    if (string.IsNullOrWhiteSpace(originalPath) ||
+                        !string.Equals(Path.GetFullPath(originalPath), intendedPath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    foreach (var obj in serializedFile.Objects ?? new List<UnityObject>())
+                    {
+                        if (obj is AssetStudio.AnimationClip clip && obj.m_PathID == selectedAsset.PathId)
+                            return BuildAnimationClipInfo(clip, selectedAsset, originalPath, serializedFile.unityVersion, serializedFile.m_TargetPlatform.ToString());
+                    }
+                }
+
+                throw new InvalidDataException("The selected AnimationClip could not be reloaded from its source bundle and Path ID. Re-scan the package and select the clip again.");
+            }
+            catch (Exception ex) when (!(ex is InvalidDataException))
+            {
+                throw new InvalidDataException("Could not inspect AnimationClip data from isolated bundle copies. Original source files were not modified. Details: " + ex.Message, ex);
+            }
+            finally
+            {
+                try { manager.Clear(); } catch { }
+                try { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); } catch { }
+            }
+        }
+
+        private static VisualLabAnimationClipInfo BuildAnimationClipInfo(
+            AssetStudio.AnimationClip clip,
+            VisualLabUnityAssetItem selectedAsset,
+            string sourcePath,
+            string unityVersion,
+            string platform)
+        {
+            if (clip == null) throw new ArgumentNullException(nameof(clip));
+            var info = new VisualLabAnimationClipInfo
+            {
+                Name = string.IsNullOrWhiteSpace(clip.m_Name) ? selectedAsset.Name : clip.m_Name,
+                SourceBundlePath = sourcePath,
+                PathId = clip.m_PathID,
+                UnityVersion = unityVersion ?? "",
+                Platform = platform ?? "",
+                SampleRate = clip.m_SampleRate,
+                WrapMode = clip.m_WrapMode,
+                Legacy = clip.m_Legacy,
+                Compressed = clip.m_Compressed,
+                HighQualityCurve = clip.m_UseHighQualityCurve,
+                HasMuscleClip = clip.m_MuscleClip != null,
+                MuscleClipLoops = clip.m_MuscleClip != null && clip.m_MuscleClip.m_LoopTime,
+                BindingCount = clip.m_ClipBindingConstant?.genericBindings?.Length ?? 0,
+                PositionCurveCount = clip.m_PositionCurves?.Length ?? 0,
+                RotationCurveCount = (clip.m_RotationCurves?.Length ?? 0) + (clip.m_CompressedRotationCurves?.Length ?? 0),
+                EulerCurveCount = clip.m_EulerCurves?.Length ?? 0,
+                ScaleCurveCount = clip.m_ScaleCurves?.Length ?? 0,
+                FloatCurveCount = clip.m_FloatCurves?.Length ?? 0,
+                CompressedRotationCurveCount = clip.m_CompressedRotationCurves?.Length ?? 0,
+                PPtrCurveCount = clip.m_PPtrCurves?.Length ?? 0,
+                EventCount = clip.m_Events?.Length ?? 0
+            };
+
+            foreach (var curve in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                AddAnimationCurve(info, "Position", curve.path, "", curve.curve?.m_Curve?.Select(x => x.time), 0, "");
+            foreach (var curve in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
+                AddAnimationCurve(info, "Rotation", curve.path, "", curve.curve?.m_Curve?.Select(x => x.time), 0, "");
+            foreach (var curve in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                AddAnimationCurve(info, "Euler rotation", curve.path, "", curve.curve?.m_Curve?.Select(x => x.time), 0, "");
+            foreach (var curve in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                AddAnimationCurve(info, "Scale", curve.path, "", curve.curve?.m_Curve?.Select(x => x.time), 0, "");
+            foreach (var curve in clip.m_FloatCurves ?? Array.Empty<AssetStudio.FloatCurve>())
+                AddAnimationCurve(info, "Float/property", curve.path, curve.attribute, curve.curve?.m_Curve?.Select(x => x.time), 0,
+                    "May target a component property; not necessarily a Transform channel.");
+            foreach (var curve in clip.m_CompressedRotationCurves ?? Array.Empty<AssetStudio.CompressedAnimationCurve>())
+            {
+                var count = curve.m_Times == null ? 0 : (int)Math.Min(curve.m_Times.m_NumItems, (uint)int.MaxValue);
+                AddAnimationCurve(info, "Compressed rotation", curve.m_Path, "", null, count,
+                    "Compressed keys indexed; decoded key timestamps are not enumerated in this inspector.");
+            }
+            foreach (var curve in clip.m_PPtrCurves ?? Array.Empty<AssetStudio.PPtrCurve>())
+                AddAnimationCurve(info, "Object reference", curve.path, curve.attribute, curve.curve?.Select(x => x.time), 0,
+                    "Changes object references; runtime binding is not implemented.");
+
+            var muscle = clip.m_MuscleClip;
+            if (muscle != null && IsFinite(muscle.m_StopTime) && muscle.m_StopTime > 0)
+                info.DurationSeconds = Math.Max(info.DurationSeconds, muscle.m_StopTime);
+
+            var dense = muscle?.m_Clip?.m_DenseClip;
+            if (dense != null && dense.m_FrameCount > 0 && IsFinite(dense.m_SampleRate) && dense.m_SampleRate > 0 && IsFinite(dense.m_BeginTime))
+            {
+                var denseEnd = dense.m_BeginTime + Math.Max(0, dense.m_FrameCount - 1) / dense.m_SampleRate;
+                if (IsFinite(denseEnd)) info.DurationSeconds = Math.Max(info.DurationSeconds, denseEnd);
+            }
+
+            var streamed = muscle?.m_Clip?.m_StreamedClip;
+            if (streamed?.data != null && streamed.data.Length > 0)
+            {
+                try
+                {
+                    var frames = streamed.ReadData();
+                    foreach (var frame in frames)
+                        if (IsFinite(frame.time)) info.DurationSeconds = Math.Max(info.DurationSeconds, frame.time);
+                }
+                catch
+                {
+                    // Keep other recovered timing sources; a malformed streamed block is reported in readiness.
+                    info.PlaybackReadiness = "Streamed curve block could not be enumerated; remaining metadata is still available.";
+                }
+            }
+
+            foreach (var animationEvent in clip.m_Events ?? Array.Empty<AssetStudio.AnimationEvent>())
+            {
+                if (animationEvent == null) continue;
+                info.Events.Add(new VisualLabAnimationEventSummary
+                {
+                    TimeSeconds = animationEvent.time,
+                    FunctionName = animationEvent.functionName ?? "",
+                    Data = animationEvent.data ?? "",
+                    FloatParameter = animationEvent.floatParameter,
+                    IntParameter = animationEvent.intParameter,
+                    ObjectReferencePathId = animationEvent.objectReferenceParameter?.m_PathID ?? 0
+                });
+                if (IsFinite(animationEvent.time)) info.DurationSeconds = Math.Max(info.DurationSeconds, animationEvent.time);
+            }
+            info.Events = info.Events.OrderBy(x => x.TimeSeconds).ToList();
+
+            var hasDirectTransformCurves = info.PositionCurveCount + info.RotationCurveCount + info.EulerCurveCount + info.ScaleCurveCount > 0;
+            if (hasDirectTransformCurves)
+                info.PlaybackReadiness = "Direct transform curves were found. Rig/path binding and runtime playback are not connected yet.";
+            else if (info.HasMuscleClip)
+                info.PlaybackReadiness = "This appears to rely on Unity humanoid/muscle data. Exact playback needs compatible rig/Avatar reconstruction.";
+            else if (info.CompressedRotationCurveCount > 0)
+                info.PlaybackReadiness = "Compressed rotation data is present; decoded curve playback is not connected yet.";
+            else
+                info.PlaybackReadiness = "Metadata and events are readable, but no directly playable transform curves were identified.";
+
+            if (!IsFinite(info.DurationSeconds) || info.DurationSeconds < 0) info.DurationSeconds = 0;
+            return info;
+        }
+
+        private static void AddAnimationCurve(
+            VisualLabAnimationClipInfo info,
+            string channel,
+            string bindingPath,
+            string attribute,
+            IEnumerable<float> keyTimes,
+            int fallbackKeyCount,
+            string notes)
+        {
+            var times = (keyTimes ?? Enumerable.Empty<float>())
+                .Where(IsFinite)
+                .OrderBy(x => x)
+                .ToArray();
+            var keyCount = times.Length > 0 ? times.Length : Math.Max(0, fallbackKeyCount);
+            float? first = times.Length > 0 ? times[0] : (float?)null;
+            float? last = times.Length > 0 ? times[times.Length - 1] : (float?)null;
+            info.Curves.Add(new VisualLabAnimationCurveSummary
+            {
+                Channel = channel,
+                BindingPath = bindingPath ?? "",
+                Attribute = attribute ?? "",
+                KeyCount = keyCount,
+                FirstKeySeconds = first,
+                LastKeySeconds = last,
+                Notes = notes ?? ""
+            });
+            if (last.HasValue) info.DurationSeconds = Math.Max(info.DurationSeconds, last.Value);
+        }
+
+        private static bool IsFinite(float value)
+        {
+            return !float.IsNaN(value) && !float.IsInfinity(value);
         }
 
         public static Task<VisualLabMeshPreviewData> ExtractMeshPreviewAsync(
