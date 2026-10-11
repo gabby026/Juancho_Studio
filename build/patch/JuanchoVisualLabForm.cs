@@ -41,6 +41,7 @@ namespace AssetStudioGUI
         private readonly Button _cancelButton = new Button();
         private readonly Button _analyzeObjectsButton = new Button();
         private readonly Button _previewMeshButton = new Button();
+        private readonly Button _inspectAnimationButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private VisualLabUnityIndexResult _lastUnityIndex;
@@ -195,6 +196,11 @@ namespace AssetStudioGUI
             _previewMeshButton.Enabled = false;
             _previewMeshButton.Click += async (s, e) => await PreviewSelectedMeshAsync();
             toolbar.Controls.Add(_previewMeshButton);
+            _inspectAnimationButton.Text = "Inspect Selected AnimationClip";
+            _inspectAnimationButton.AutoSize = true;
+            _inspectAnimationButton.Enabled = false;
+            _inspectAnimationButton.Click += async (s, e) => await InspectSelectedAnimationClipAsync();
+            toolbar.Controls.Add(_inspectAnimationButton);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
             _objectCountStatus.Text = "No parsed objects";
@@ -347,6 +353,9 @@ namespace AssetStudioGUI
                 (string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase) ||
                  string.Equals(selected.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase)) &&
                 _lastUnityIndex != null;
+            _inspectAnimationButton.Enabled = selected != null &&
+                string.Equals(selected.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase) &&
+                _lastUnityIndex != null;
         }
 
         private async Task PreviewSelectedMeshAsync()
@@ -386,6 +395,49 @@ namespace AssetStudioGUI
                 _statusLabel.Text = "Mesh preview failed";
                 MessageBox.Show(this,
                     "The selected mesh could not be previewed. Original bundle files were not modified.\r\n\r\n" + ex.Message,
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _progressBar.Style = ProgressBarStyle.Blocks;
+                _progressBar.MarqueeAnimationSpeed = 0;
+                SetScanning(false);
+            }
+        }
+
+        private async Task InspectSelectedAnimationClipAsync()
+        {
+            var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            if (selected == null || !string.Equals(selected.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(this, "Select a serialized object whose Unity class is AnimationClip first.",
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (_lastUnityIndex == null || _lastUnityIndex.InputFiles.Count == 0)
+            {
+                MessageBox.Show(this, "Analyze the Unity package first, then select an AnimationClip.",
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SetScanning(true);
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 24;
+            _statusLabel.Text = "Reading AnimationClip curves and events…";
+            _detailLabel.Text = selected.Name;
+            try
+            {
+                var info = await VisualLabUnityIndexer.InspectAnimationClipAsync(_lastUnityIndex.InputFiles, selected);
+                using (var inspector = new JuanchoVisualLabAnimationInspectorForm(info))
+                    inspector.ShowDialog(this);
+                _statusLabel.Text = "AnimationClip inspection closed";
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = "AnimationClip inspection failed";
+                MessageBox.Show(this,
+                    "The selected AnimationClip could not be inspected. Original bundle files were not modified.\r\n\r\n" + ex.Message,
                     "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally
@@ -806,7 +858,11 @@ namespace AssetStudioGUI
             _cancelButton.Enabled = scanning;
             _analyzeObjectsButton.Enabled = !scanning && _lastScan != null && _lastScan.Assets.Any(IsUnityInput);
             UpdateMeshPreviewButton();
-            if (scanning) _previewMeshButton.Enabled = false;
+            if (scanning)
+            {
+                _previewMeshButton.Enabled = false;
+                _inspectAnimationButton.Enabled = false;
+            }
             _progressBar.Visible = scanning;
             if (!scanning) _progressBar.Value = 0;
         }
