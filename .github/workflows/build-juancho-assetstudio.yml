@@ -113,8 +113,8 @@ jobs:
           Visual Lab:
           1. Open Menu -> MLBB Visual Lab.
           2. Scan a package folder or select multiple Unity bundles.
-          3. Visual Lab automatically analyzes selected Unity files after the scan and opens the interactive player if it finds a GameObject hierarchy and AnimationClip.
-          4. In the player choose a model root and AnimationClip, then click Load Model + Clip. Use Play/Pause/Stop, Loop, speed, scrubbing, and mouse orbit/pan/zoom.
+          3. Visual Lab looks specifically for `hero_<heroname>_skin.unity3d` and requires that same file to contain Mesh, GameObject, and AnimationClip objects.
+          4. If found, the player lists only the model roots and AnimationClips from that hero-skin bundle. Select a clip to load/play it; use Play/Pause/Stop, Loop, speed, scrubbing, and mouse orbit/pan/zoom.
           5. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
           6. Use Preview Selected Model / Mesh (static) for geometry inspection, or Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
           7. Use Skill Timeline to author and save manual event timings.
@@ -126,7 +126,7 @@ jobs:
           - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
           Current limitations:
-          - The player is an initial reconstruction adapter: direct position/scale/rotation channels are interpolated and CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
+          - The player is an initial reconstruction adapter: direct, streamed, dense, constant, and supported compressed rotation channels are decoded; CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
           - Humanoid/muscle-only clips requiring Avatar reconstruction, AnimatorController/state machines, and game-specific logic are not yet supported.
           - Recovered MLBB materials/textures/original shaders are not rendered; Unity particle/trail playback and executable skill timelines remain unimplemented.
           - Validate real hero packages on Windows; a successful build alone does not prove the selected model/clip binding is correct.
