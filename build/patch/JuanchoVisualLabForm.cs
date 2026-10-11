@@ -97,6 +97,10 @@ namespace AssetStudioGUI
             _exportReportButton.AutoSize = true;
             _exportReportButton.Enabled = false;
             _exportReportButton.Click += async (s, e) => await ExportReportAsync();
+            _analyzeObjectsButton.Text = "Analyze Unity Bundle Contents";
+            _analyzeObjectsButton.AutoSize = true;
+            _analyzeObjectsButton.Enabled = false;
+            _analyzeObjectsButton.Click += async (s, e) => await AnalyzeUnityBundlesAsync();
             _cancelButton.Text = "Cancel Scan";
             _cancelButton.AutoSize = true;
             _cancelButton.Enabled = false;
@@ -116,6 +120,7 @@ namespace AssetStudioGUI
             buttons.Controls.Add(_scanFolderButton);
             buttons.Controls.Add(_scanFilesButton);
             buttons.Controls.Add(_exportReportButton);
+            buttons.Controls.Add(_analyzeObjectsButton);
             buttons.Controls.Add(_cancelButton);
             buttons.Controls.Add(useSelectedButton);
 
