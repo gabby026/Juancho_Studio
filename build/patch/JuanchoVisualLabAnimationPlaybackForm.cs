@@ -129,7 +129,7 @@ namespace Juancho.VisualLab
                 var isActuallySkinned = part.IsSkinned &&
                     part.Weights.Length == part.Vertices.Length / 3 * 4 &&
                     part.BoneIndices.Length == part.Weights.Length &&
-                    part.BoneNodeIndices.Length > 0 &&
+                    part.BoneNodeIndices.Any(index => index >= 0 && index < worlds.Length) &&
                     part.BindPoses.Length > 0;
 
                 for (int vertex = 0; vertex < part.Vertices.Length / 3; vertex++)
@@ -138,36 +138,51 @@ namespace Juancho.VisualLab
                     var localNormal = new NVector3(part.Normals[vertex * 3], part.Normals[vertex * 3 + 1], part.Normals[vertex * 3 + 2]);
                     NVector3 p = NVector3.Zero;
                     NVector3 n = NVector3.Zero;
-                    float totalWeight = 0;
+                    float validWeightTotal = 0;
 
                     if (isActuallySkinned)
                     {
+                        // Normalize only the influences that actually resolve to bones in this
+                        // bundle. Never mix a partially skinned vertex with the renderer-space
+                        // fallback; that blend puts the same vertex in two coordinate spaces and
+                        // is a common cause of long, stretched spikes.
                         for (int influence = 0; influence < 4; influence++)
                         {
                             var slot = vertex * 4 + influence;
                             var weight = part.Weights[slot];
                             var boneId = part.BoneIndices[slot];
-                            if (weight <= 0 || boneId < 0 || boneId >= part.BindPoses.Length || boneId >= part.BoneNodeIndices.Length)
+                            if (!IsFinite(weight) || weight <= 0 || boneId < 0 ||
+                                boneId >= part.BindPoses.Length || boneId >= part.BoneNodeIndices.Length)
                                 continue;
                             var boneNode = part.BoneNodeIndices[boneId];
                             if (boneNode < 0 || boneNode >= worlds.Length) continue;
-                            var skinMatrix = part.BindPoses[boneId] * worlds[boneNode];
-                            p += NVector3.Transform(localPosition, skinMatrix) * weight;
-                            n += NVector3.TransformNormal(localNormal, skinMatrix) * weight;
-                            totalWeight += weight;
+                            validWeightTotal += weight;
+                        }
+
+                        if (validWeightTotal > 0.0001f)
+                        {
+                            for (int influence = 0; influence < 4; influence++)
+                            {
+                                var slot = vertex * 4 + influence;
+                                var weight = part.Weights[slot];
+                                var boneId = part.BoneIndices[slot];
+                                if (!IsFinite(weight) || weight <= 0 || boneId < 0 ||
+                                    boneId >= part.BindPoses.Length || boneId >= part.BoneNodeIndices.Length)
+                                    continue;
+                                var boneNode = part.BoneNodeIndices[boneId];
+                                if (boneNode < 0 || boneNode >= worlds.Length) continue;
+                                var normalizedWeight = weight / validWeightTotal;
+                                var skinMatrix = part.BindPoses[boneId] * worlds[boneNode];
+                                p += NVector3.Transform(localPosition, skinMatrix) * normalizedWeight;
+                                n += NVector3.TransformNormal(localNormal, skinMatrix) * normalizedWeight;
+                            }
                         }
                     }
 
-                    if (!isActuallySkinned || totalWeight < 0.0001f)
+                    if (!isActuallySkinned || validWeightTotal <= 0.0001f)
                     {
                         p = NVector3.Transform(localPosition, nodeWorld);
                         n = NVector3.TransformNormal(localNormal, nodeWorld);
-                    }
-                    else if (totalWeight < 0.9999f)
-                    {
-                        var fallback = 1 - totalWeight;
-                        p += NVector3.Transform(localPosition, nodeWorld) * fallback;
-                        n += NVector3.TransformNormal(localNormal, nodeWorld) * fallback;
                     }
 
                     if (n.LengthSquared() > 1e-10f) n = NVector3.Normalize(n);
@@ -262,8 +277,59 @@ namespace Juancho.VisualLab
                 var scene = new VisualLabPlaybackScene { ModelName = string.IsNullOrWhiteSpace(root.m_Name) ? rootItem.Name : root.m_Name };
                 var nodeByIdentity = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
                 var transforms = new List<AssetStudio.Transform>();
-                BuildNodes(rootTransform, -1, "", scene, transforms, nodeByIdentity, new HashSet<string>(StringComparer.OrdinalIgnoreCase), 0);
-                if (scene.Nodes.Count == 0) throw new InvalidDataException("The selected GameObject hierarchy contained no usable Transform nodes.");
+                var visitedTransforms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var selectedBundlePath = SafeFullPath(rootItem.SourceBundlePath);
+                var selectedBundleFiles = manager.assetsFileList
+                    .Where(file => string.Equals(
+                        SafeFullPath(ResolveOriginalPath(file, workspaceToOriginal, inputs, workspace)),
+                        selectedBundlePath, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                var bundleTransforms = selectedBundleFiles
+                    .SelectMany(file => file.Objects ?? new List<UnityObject>())
+                    .OfType<AssetStudio.Transform>()
+                    .GroupBy(Identity, StringComparer.OrdinalIgnoreCase)
+                    .Select(group => group.First())
+                    .ToArray();
+                var bundleTransformIds = new HashSet<string>(bundleTransforms.Select(Identity), StringComparer.OrdinalIgnoreCase);
+
+                // Preserve the selected GameObject as the animation path anchor, while bringing
+                // every connected hierarchy in the same hero skin bundle into the scene. This
+                // includes renderer objects and bones that sit outside the originally chosen subtree.
+                var anchorAncestors = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var anchorCursor = rootTransform;
+                while (anchorCursor != null && anchorAncestors.Add(Identity(anchorCursor)))
+                {
+                    if (anchorCursor.m_Father == null ||
+                        !anchorCursor.m_Father.TryGet(out AssetStudio.Transform parent) ||
+                        parent == null)
+                        break;
+                    anchorCursor = parent;
+                }
+                var bundleRoots = bundleTransforms.Where(transform =>
+                {
+                    return transform.m_Father == null ||
+                        !transform.m_Father.TryGet(out AssetStudio.Transform parent) ||
+                        parent == null ||
+                        !bundleTransformIds.Contains(Identity(parent));
+                }).OrderByDescending(transform => anchorAncestors.Contains(Identity(transform))).ToArray();
+
+                foreach (var hierarchyRoot in bundleRoots)
+                {
+                    if (nodeByIdentity.ContainsKey(Identity(hierarchyRoot))) continue;
+                    string rootPathPrefix = anchorAncestors.Contains(Identity(hierarchyRoot)) ? "" : "@bundle";
+                    BuildNodes(hierarchyRoot, -1, rootPathPrefix, scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+                }
+                // Some game bundles have incomplete parent pointers. Add any remaining transform
+                // as a detached hierarchy so its mesh and bone references are not silently dropped.
+                foreach (var transform in bundleTransforms)
+                {
+                    if (nodeByIdentity.ContainsKey(Identity(transform))) continue;
+                    BuildNodes(transform, -1, "@bundle", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+                }
+                if (!nodeByIdentity.ContainsKey(Identity(rootTransform)))
+                    BuildNodes(rootTransform, -1, "", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+
+                if (scene.Nodes.Count == 0) throw new InvalidDataException("The selected hero skin bundle contained no usable Transform nodes.");
                 AddMeshes(scene, transforms, nodeByIdentity, rootTransform, workspaceToOriginal, inputs, workspace);
 
                 BuildClip(scene, clip, clipItem, transforms);
@@ -309,7 +375,8 @@ namespace Juancho.VisualLab
 
         private static void BuildNodes(
             AssetStudio.Transform transform, int parentIndex, string path, VisualLabPlaybackScene scene,
-            List<AssetStudio.Transform> transforms, Dictionary<string, int> nodeByIdentity, HashSet<string> visited, int depth)
+            List<AssetStudio.Transform> transforms, Dictionary<string, int> nodeByIdentity, HashSet<string> visited, int depth,
+            string anchorIdentity)
         {
             if (transform == null) return;
             if (depth > 512) throw new InvalidDataException("Transform hierarchy depth exceeded safety limit.");
@@ -318,7 +385,11 @@ namespace Juancho.VisualLab
             string name = transform.m_GameObject != null && transform.m_GameObject.TryGet(out AssetStudio.GameObject go) && go != null
                 ? (go.m_Name ?? "")
                 : "Transform_" + transform.m_PathID;
-            string ownPath = parentIndex < 0 ? "" : (string.IsNullOrEmpty(path) ? name : path + "/" + name);
+            bool isAnchor = string.Equals(key, anchorIdentity, StringComparison.OrdinalIgnoreCase);
+            string ownPath = isAnchor ? "" :
+                (parentIndex < 0
+                    ? (string.IsNullOrEmpty(path) ? "" : path + "/" + name)
+                    : (string.IsNullOrEmpty(path) ? name : path + "/" + name));
             int nodeIndex = scene.Nodes.Count;
             var p = transform.m_LocalPosition;
             var r = transform.m_LocalRotation;
@@ -334,7 +405,7 @@ namespace Juancho.VisualLab
             nodeByIdentity[key] = nodeIndex;
             foreach (var pointer in transform.m_Children ?? Array.Empty<PPtr<AssetStudio.Transform>>())
                 if (pointer != null && pointer.TryGet(out AssetStudio.Transform child) && child != null)
-                    BuildNodes(child, nodeIndex, ownPath, scene, transforms, nodeByIdentity, visited, depth + 1);
+                    BuildNodes(child, nodeIndex, ownPath, scene, transforms, nodeByIdentity, visited, depth + 1, anchorIdentity);
         }
 
         private static void AddMeshes(
@@ -360,7 +431,9 @@ namespace Juancho.VisualLab
                         skinned = skinRenderer;
                     }
                     if (mesh == null) continue;
-                    var meshKey = Identity(transform) + "|" + Identity(mesh);
+                    // A mesh can be instanced by multiple renderers; each renderer has its own
+                    // transform/bone mapping, so deduplicate by component rather than Mesh alone.
+                    var meshKey = Identity(component) + "|" + Identity(mesh);
                     if (!seen.Add(meshKey)) continue;
                     if (mesh.m_VertexCount <= 0 || mesh.m_Vertices == null || mesh.m_Vertices.Length < mesh.m_VertexCount * 3) continue;
                     sourceVertices += mesh.m_VertexCount;
