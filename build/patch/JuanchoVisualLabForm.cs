@@ -363,8 +363,8 @@ namespace AssetStudioGUI
                 string.Equals(selected.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase) &&
                 _lastUnityIndex != null;
             _playAnimationButton.Enabled = _lastUnityIndex != null &&
-                _lastUnityIndex.Assets.Any(x => string.Equals(x.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase)) &&
-                _lastUnityIndex.Assets.Any(x => string.Equals(x.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase));
+                JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(_lastUnityIndex.InputFiles)
+                    .Any(path => JuanchoVisualLabAnimationPlaybackForm.BundleHasModelAndClip(_lastUnityIndex.Assets, path));
         }
 
         private async Task PreviewSelectedMeshAsync()
