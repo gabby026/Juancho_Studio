@@ -912,7 +912,7 @@ void main(){ vec3 N=normalize(vNormal); vec3 L=normalize(vec3(0.45,0.8,0.35)); f
 
         private void Gl_Paint(object sender, PaintEventArgs e)
         {
-            if (!_glReady) { e.Graphics.Clear(Color.FromArgb(20, 23, 30)); return; }
+            if (!_glReady) { e.Graphics.Clear(System.Drawing.Color.FromArgb(20, 23, 30)); return; }
             _gl.MakeCurrent();
             GL.Viewport(0, 0, Math.Max(1, _gl.Width), Math.Max(1, _gl.Height));
             GL.ClearColor(0.075f, 0.09f, 0.12f, 1f); GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
