@@ -83,6 +83,7 @@ namespace Juancho.VisualLab
         public int DirectCurveCount { get; set; }
         public int SkinnedPartCount { get; set; }
         public int UnboundCurveCount { get; set; }
+        public string CurveExtractionNotes { get; set; } = "";
 
         public void Evaluate(float timeSeconds, bool loop)
         {
@@ -265,7 +266,7 @@ namespace Juancho.VisualLab
                 if (scene.Nodes.Count == 0) throw new InvalidDataException("The selected GameObject hierarchy contained no usable Transform nodes.");
                 AddMeshes(scene, transforms, nodeByIdentity, rootTransform, workspaceToOriginal, inputs, workspace);
 
-                BuildClip(scene, clip, clipItem);
+                BuildClip(scene, clip, clipItem, transforms);
                 if (scene.MeshParts.Count == 0) throw new InvalidDataException("No usable MeshFilter or SkinnedMeshRenderer geometry was found below the selected root. Choose the actual hero model root, not a parent/helper object.");
                 scene.VertexCount = scene.MeshParts.Sum(x => x.Vertices.Length / 3);
                 scene.TriangleCount = scene.MeshParts.Sum(x => x.Indices.Length / 3);
@@ -284,14 +285,15 @@ namespace Juancho.VisualLab
                 scene.Evaluate(0, false);
                 var partsWithSkinWeights = scene.MeshParts.Count(x => x.IsSkinned && x.Weights.Length == x.Vertices.Length / 3 * 4 && x.BindPoses.Length > 0);
                 scene.PlaybackNotes =
-                    "Direct Transform curves: " + scene.DirectCurveCount +
+                    "Supported Transform curve channels: " + scene.DirectCurveCount +
                     "; curve paths not found in selected hierarchy: " + scene.UnboundCurveCount +
                     "; skinned mesh parts: " + scene.SkinnedPartCount +
                     "; parts with usable skin weights: " + partsWithSkinWeights +
                     "; clip events: " + scene.ClipEventCount + ". " +
                     (scene.DirectCurveCount == 0
-                        ? "This clip has no directly keyed Transform curves supported by this player. Humanoid/muscle-only or controller-driven playback is not yet supported for this clip."
-                        : "Preview uses linear vector interpolation and quaternion slerp between serialized key values; original tangents, Avatar muscle reconstruction, material animation and skill events are not simulated.");
+                        ? "No supported Transform channels were decoded. Check the selected root/clip and binding diagnostics."
+                        : "Vector curves use linear interpolation and quaternion curves use slerp; Unity tangents, Avatar muscle reconstruction and controller transitions are not fully reproduced.") +
+                    (string.IsNullOrWhiteSpace(scene.CurveExtractionNotes) ? "" : " Curve decoder note: " + scene.CurveExtractionNotes);
                 return scene;
             }
             catch (Exception ex) when (!(ex is InvalidDataException))
@@ -405,27 +407,58 @@ namespace Juancho.VisualLab
             }
         }
 
-        private static void BuildClip(VisualLabPlaybackScene scene, AssetStudio.AnimationClip clip, VisualLabUnityAssetItem item)
+        private static void BuildClip(VisualLabPlaybackScene scene, AssetStudio.AnimationClip clip, VisualLabUnityAssetItem item, List<AssetStudio.Transform> transforms)
         {
             scene.ClipName = string.IsNullOrWhiteSpace(clip.m_Name) ? item.Name : clip.m_Name;
             scene.SampleRate = clip.m_SampleRate > 0 && IsFinite(clip.m_SampleRate) ? clip.m_SampleRate : 30;
+
+            var embeddedClip = clip.m_MuscleClip?.m_Clip;
+            List<AssetStudio.StreamedFrame> streamedFrames = null;
+            string extractionNote = "";
+            try
+            {
+                if (embeddedClip?.m_StreamedClip != null &&
+                    embeddedClip.m_StreamedClip.data != null &&
+                    embeddedClip.m_StreamedClip.data.Length > 0)
+                    streamedFrames = embeddedClip.m_StreamedClip.ReadData();
+            }
+            catch (Exception ex)
+            {
+                extractionNote = "Streamed keys could not be decoded: " + ex.Message;
+            }
+
             float duration = 0;
-            foreach (var c in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
-                duration = Math.Max(duration, MaxTime(c.curve?.m_Curve?.Select(k => k.time)));
-            foreach (var c in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
-                duration = Math.Max(duration, MaxTime(c.curve?.m_Curve?.Select(k => k.time)));
-            foreach (var c in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
-                duration = Math.Max(duration, MaxTime(c.curve?.m_Curve?.Select(k => k.time)));
-            foreach (var c in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
-                duration = Math.Max(duration, MaxTime(c.curve?.m_Curve?.Select(k => k.time)));
+            foreach (var curve in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                duration = Math.Max(duration, MaxTime(curve.curve?.m_Curve?.Select(k => k.time)));
+            foreach (var curve in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
+                duration = Math.Max(duration, MaxTime(curve.curve?.m_Curve?.Select(k => k.time)));
+            foreach (var curve in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                duration = Math.Max(duration, MaxTime(curve.curve?.m_Curve?.Select(k => k.time)));
+            foreach (var curve in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                duration = Math.Max(duration, MaxTime(curve.curve?.m_Curve?.Select(k => k.time)));
             foreach (var evt in clip.m_Events ?? Array.Empty<AssetStudio.AnimationEvent>())
                 if (evt != null && IsFinite(evt.time)) duration = Math.Max(duration, evt.time);
             if (clip.m_MuscleClip != null && IsFinite(clip.m_MuscleClip.m_StopTime))
                 duration = Math.Max(duration, clip.m_MuscleClip.m_StopTime);
+            if (streamedFrames != null)
+                foreach (var frame in streamedFrames)
+                    if (frame != null && IsFinite(frame.time)) duration = Math.Max(duration, frame.time);
+            var denseForDuration = embeddedClip?.m_DenseClip;
+            if (denseForDuration != null && denseForDuration.m_FrameCount > 0 &&
+                denseForDuration.m_SampleRate > 0 && IsFinite(denseForDuration.m_SampleRate) &&
+                IsFinite(denseForDuration.m_BeginTime))
+                duration = Math.Max(duration, denseForDuration.m_BeginTime + (denseForDuration.m_FrameCount - 1) / denseForDuration.m_SampleRate);
+
             scene.ClipEventCount = clip.m_Events?.Length ?? 0;
             scene.Duration = Math.Max(duration, scene.SampleRate > 0 ? 1f / scene.SampleRate : 0.0333f);
 
             var byPath = new Dictionary<string, PlaybackTransformTrack>(StringComparer.Ordinal);
+            var positionsByPath = new Dictionary<string, List<PlaybackVectorKey>>(StringComparer.Ordinal);
+            var scalesByPath = new Dictionary<string, List<PlaybackVectorKey>>(StringComparer.Ordinal);
+            var eulersByPath = new Dictionary<string, List<PlaybackVectorKey>>(StringComparer.Ordinal);
+            var rotationsByPath = new Dictionary<string, List<PlaybackQuaternionKey>>(StringComparer.Ordinal);
+            var markedChannels = new HashSet<string>(StringComparer.Ordinal);
+
             PlaybackTransformTrack Track(string path)
             {
                 path = path ?? "";
@@ -437,63 +470,271 @@ namespace Juancho.VisualLab
                 return track;
             }
 
-            foreach (var c in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+            string NormalizePath(string path) => NormalizeClipPath(scene, path);
+
+            void MarkChannel(string path, string channel)
             {
-                var keys = (c.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
-                    .Where(k => k != null && IsFinite(k.time))
-                    .OrderBy(k => k.time).Select(k => new PlaybackVectorKey { Time = k.time, Value = new NVector3(k.value.X, k.value.Y, k.value.Z) }).ToArray();
-                if (keys.Length > 0) { Track(c.path).Positions = keys; scene.DirectCurveCount++; }
+                if (markedChannels.Add(path + "|" + channel))
+                    scene.DirectCurveCount++;
             }
-            foreach (var c in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+
+            void AddVectorKey(Dictionary<string, List<PlaybackVectorKey>> destination, string path, string channel, float time, NVector3 value)
             {
-                var keys = (c.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
-                    .Where(k => k != null && IsFinite(k.time))
-                    .OrderBy(k => k.time).Select(k => new PlaybackVectorKey { Time = k.time, Value = new NVector3(k.value.X, k.value.Y, k.value.Z) }).ToArray();
-                if (keys.Length > 0) { Track(c.path).Scales = keys; scene.DirectCurveCount++; }
+                if (!IsFinite(time) || !IsFinite(value.X) || !IsFinite(value.Y) || !IsFinite(value.Z)) return;
+                path = NormalizePath(path);
+                if (!destination.TryGetValue(path, out var keys))
+                {
+                    keys = new List<PlaybackVectorKey>();
+                    destination[path] = keys;
+                }
+                keys.Add(new PlaybackVectorKey { Time = time, Value = value });
+                Track(path);
+                MarkChannel(path, channel);
             }
-            foreach (var c in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+
+            void AddRotationKey(string path, float time, NQuaternion value)
             {
-                var keys = (c.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
-                    .Where(k => k != null && IsFinite(k.time))
-                    .OrderBy(k => k.time).Select(k => new PlaybackVectorKey { Time = k.time, Value = new NVector3(k.value.X, k.value.Y, k.value.Z) }).ToArray();
-                if (keys.Length > 0 && Track(c.path).Rotations.Length == 0) { Track(c.path).EulerRotations = keys; scene.DirectCurveCount++; }
+                if (!IsFinite(time) || !IsFinite(value.X) || !IsFinite(value.Y) || !IsFinite(value.Z) || !IsFinite(value.W)) return;
+                path = NormalizePath(path);
+                if (!rotationsByPath.TryGetValue(path, out var keys))
+                {
+                    keys = new List<PlaybackQuaternionKey>();
+                    rotationsByPath[path] = keys;
+                }
+                keys.Add(new PlaybackQuaternionKey { Time = time, Value = Normalize(value) });
+                Track(path);
+                MarkChannel(path, "rotation");
             }
-            foreach (var c in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
+
+            var pathHashMap = BuildPathHashMap(scene, transforms);
+            void ConsumeSerializedCurve(AssetStudio.GenericBinding binding, float time, float[] values, int baseOffset, ref int cursor)
             {
-                var keys = (c.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Quaternion>>())
-                    .Where(k => k != null && IsFinite(k.time))
-                    .OrderBy(k => k.time).Select(k => new PlaybackQuaternionKey
-                    {
-                        Time = k.time, Value = Normalize(new NQuaternion(k.value.X, k.value.Y, k.value.Z, k.value.W))
-                    }).ToArray();
-                if (keys.Length > 0) { Track(c.path).Rotations = keys; scene.DirectCurveCount++; }
+                if (binding == null || binding.typeID != AssetStudio.ClassIDType.Transform)
+                {
+                    cursor++;
+                    return;
+                }
+
+                string path = pathHashMap.TryGetValue(binding.path, out var bindingPath)
+                    ? bindingPath
+                    : "#unresolved_" + binding.path.ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
+                int attribute = (int)binding.attribute;
+
+                if (attribute == 1 || attribute == 3 || attribute == 4)
+                {
+                    if (baseOffset + cursor + 2 >= values.Length) { cursor++; return; }
+                    var value = new NVector3(values[baseOffset + cursor], values[baseOffset + cursor + 1], values[baseOffset + cursor + 2]);
+                    cursor += 3;
+                    if (attribute == 1) AddVectorKey(positionsByPath, path, "position", time, value);
+                    else if (attribute == 3) AddVectorKey(scalesByPath, path, "scale", time, value);
+                    else AddVectorKey(eulersByPath, path, "euler", time, value);
+                }
+                else if (attribute == 2)
+                {
+                    if (baseOffset + cursor + 3 >= values.Length) { cursor++; return; }
+                    var value = new NQuaternion(values[baseOffset + cursor], values[baseOffset + cursor + 1],
+                        values[baseOffset + cursor + 2], values[baseOffset + cursor + 3]);
+                    cursor += 4;
+                    AddRotationKey(path, time, value);
+                }
+                else
+                {
+                    cursor++;
+                }
             }
-            foreach (var c in clip.m_CompressedRotationCurves ?? Array.Empty<AssetStudio.CompressedAnimationCurve>())
+
+            foreach (var curve in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
+                    if (key != null) AddVectorKey(positionsByPath, curve.path, "position", key.time, new NVector3(key.value.X, key.value.Y, key.value.Z));
+
+            foreach (var curve in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
+                    if (key != null) AddVectorKey(scalesByPath, curve.path, "scale", key.time, new NVector3(key.value.X, key.value.Y, key.value.Z));
+
+            foreach (var curve in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
+                foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
+                    if (key != null) AddVectorKey(eulersByPath, curve.path, "euler", key.time, new NVector3(key.value.X, key.value.Y, key.value.Z));
+
+            foreach (var curve in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
+                foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Quaternion>>())
+                    if (key != null) AddRotationKey(curve.path, key.time, new NQuaternion(key.value.X, key.value.Y, key.value.Z, key.value.W));
+
+            foreach (var curve in clip.m_CompressedRotationCurves ?? Array.Empty<AssetStudio.CompressedAnimationCurve>())
             {
                 try
                 {
-                    var times = c.m_Times?.UnpackInts() ?? Array.Empty<int>();
-                    var quaternions = c.m_Values?.UnpackQuats() ?? Array.Empty<AssetStudio.Quaternion>();
+                    var times = curve.m_Times?.UnpackInts() ?? Array.Empty<int>();
+                    var quaternions = curve.m_Values?.UnpackQuats() ?? Array.Empty<AssetStudio.Quaternion>();
                     int count = Math.Min(times.Length, quaternions.Length);
                     if (count == 0) continue;
-                    double maxPacked = Math.Pow(2, Math.Max(1, (int)c.m_Times.m_BitSize)) - 1;
-                    var keys = new PlaybackQuaternionKey[count];
+                    double maxPacked = Math.Pow(2, Math.Max(1, (int)curve.m_Times.m_BitSize)) - 1;
                     for (int i = 0; i < count; i++)
-                        keys[i] = new PlaybackQuaternionKey
-                        {
-                            Time = Math.Max(0, Math.Min(scene.Duration, (float)(times[i] / maxPacked * scene.Duration))),
-                            Value = Normalize(new NQuaternion(quaternions[i].X, quaternions[i].Y, quaternions[i].Z, quaternions[i].W))
-                        };
-                    keys = keys.OrderBy(k => k.Time).ToArray();
-                    if (keys.Length > 0) { Track(c.m_Path).Rotations = keys; scene.DirectCurveCount++; }
+                    {
+                        float time = Math.Max(0, Math.Min(scene.Duration, (float)(times[i] / maxPacked * scene.Duration)));
+                        var q = quaternions[i];
+                        AddRotationKey(curve.m_Path, time, new NQuaternion(q.X, q.Y, q.Z, q.W));
+                    }
                 }
-                catch { /* This clip still retains every other readable transform channel. */ }
+                catch { /* Keep other readable channels when one compressed channel is malformed. */ }
             }
 
-            var nodePaths = new HashSet<string>(scene.Nodes.Select(n => n.Path), StringComparer.Ordinal);
+            var bindingConstant = clip.m_ClipBindingConstant;
+            if (bindingConstant == null && embeddedClip?.m_Binding != null)
+            {
+                try { bindingConstant = embeddedClip.ConvertValueArrayToGenericBinding(); }
+                catch (Exception ex) { extractionNote = AppendNote(extractionNote, "Binding table could not be reconstructed: " + ex.Message); }
+            }
+
+            if (embeddedClip != null && bindingConstant?.genericBindings != null)
+            {
+                try
+                {
+                    int streamedCurveCount = embeddedClip.m_StreamedClip == null
+                        ? 0 : (int)Math.Min((long)int.MaxValue, (long)embeddedClip.m_StreamedClip.curveCount);
+                    if (streamedFrames != null)
+                    {
+                        for (int frameIndex = 1; frameIndex < streamedFrames.Count - 1; frameIndex++)
+                        {
+                            var frame = streamedFrames[frameIndex];
+                            var frameKeys = frame?.keyList ?? Array.Empty<AssetStudio.StreamedClip.StreamedCurveKey>();
+                            var values = frameKeys.Select(k => k?.value ?? 0f).ToArray();
+                            int cursor = 0;
+                            while (cursor < frameKeys.Length)
+                            {
+                                int curveIndex = frameKeys[cursor]?.index ?? cursor;
+                                ConsumeSerializedCurve(bindingConstant.FindBinding(curveIndex), frame.time, values, 0, ref cursor);
+                            }
+                        }
+                    }
+
+                    var dense = embeddedClip.m_DenseClip;
+                    int denseCurveCount = dense == null ? 0 : (int)Math.Min((long)int.MaxValue, (long)dense.m_CurveCount);
+                    if (dense != null && dense.m_FrameCount > 0 && denseCurveCount > 0 &&
+                        dense.m_SampleArray != null && dense.m_SampleRate > 0 && IsFinite(dense.m_SampleRate))
+                    {
+                        for (int frameIndex = 0; frameIndex < dense.m_FrameCount; frameIndex++)
+                        {
+                            float time = dense.m_BeginTime + frameIndex / dense.m_SampleRate;
+                            int baseOffset = checked(frameIndex * denseCurveCount);
+                            int cursor = 0;
+                            while (cursor < denseCurveCount)
+                                ConsumeSerializedCurve(bindingConstant.FindBinding(streamedCurveCount + cursor),
+                                    time, dense.m_SampleArray, baseOffset, ref cursor);
+                        }
+                    }
+
+                    var constant = embeddedClip.m_ConstantClip;
+                    if (constant?.data != null && constant.data.Length > 0)
+                    {
+                        int constantStart = checked(streamedCurveCount + denseCurveCount);
+                        foreach (float time in new[] { 0f, scene.Duration })
+                        {
+                            int cursor = 0;
+                            while (cursor < constant.data.Length)
+                                ConsumeSerializedCurve(bindingConstant.FindBinding(constantStart + cursor),
+                                    time, constant.data, 0, ref cursor);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    extractionNote = AppendNote(extractionNote, "Some streamed/dense channels were skipped: " + ex.Message);
+                }
+            }
+            else if (clip.m_MuscleClip != null && scene.DirectCurveCount == 0)
+            {
+                extractionNote = AppendNote(extractionNote, "The clip has a muscle container but no compatible binding table was available.");
+            }
+
+            foreach (var pair in positionsByPath)
+                Track(pair.Key).Positions = pair.Value.OrderBy(k => k.Time).ToArray();
+            foreach (var pair in scalesByPath)
+                Track(pair.Key).Scales = pair.Value.OrderBy(k => k.Time).ToArray();
+            foreach (var pair in eulersByPath)
+                Track(pair.Key).EulerRotations = pair.Value.OrderBy(k => k.Time).ToArray();
+            foreach (var pair in rotationsByPath)
+                Track(pair.Key).Rotations = pair.Value.OrderBy(k => k.Time).ToArray();
+
+            var nodePaths = new HashSet<string>(scene.Nodes.Select(node => node.Path), StringComparer.Ordinal);
             foreach (var track in byPath.Values)
                 if (!nodePaths.Contains(track.Path)) scene.UnboundCurveCount++;
-            scene.Tracks = byPath.Values.OrderBy(x => x.Path, StringComparer.Ordinal).ToList();
+            scene.Tracks = byPath.Values.OrderBy(track => track.Path, StringComparer.Ordinal).ToList();
+            scene.CurveExtractionNotes = extractionNote;
+        }
+
+        private static string AppendNote(string current, string next) =>
+            string.IsNullOrWhiteSpace(current) ? next : current + " " + next;
+
+        private static Dictionary<uint, string> BuildPathHashMap(
+            VisualLabPlaybackScene scene, List<AssetStudio.Transform> transforms)
+        {
+            var result = new Dictionary<uint, string>();
+            // Unity/AssetStudio path hashes include the whole transform path and each suffix.
+            // Mapping them here lets GenericBinding entries resolve even when the Avatar is not present.
+            foreach (var node in scene.Nodes)
+            {
+                string candidate = string.IsNullOrWhiteSpace(node.Path)
+                    ? scene.ModelName
+                    : scene.ModelName + "/" + node.Path;
+                while (!string.IsNullOrEmpty(candidate))
+                {
+                    result[ComputeUnityPathHash(candidate)] = NormalizeClipPath(scene, candidate);
+                    int slash = candidate.IndexOf('/');
+                    if (slash < 0) break;
+                    candidate = candidate.Substring(slash + 1);
+                }
+            }
+
+            foreach (var transform in transforms ?? new List<AssetStudio.Transform>())
+            {
+                if (transform?.m_GameObject == null || !transform.m_GameObject.TryGet(out AssetStudio.GameObject gameObject) || gameObject == null)
+                    continue;
+                foreach (var pointer in gameObject.m_Components ?? Array.Empty<PPtr<AssetStudio.Component>>())
+                {
+                    if (pointer == null || !pointer.TryGet(out AssetStudio.Component component) || !(component is AssetStudio.Animator animator) ||
+                        animator.m_Avatar == null || !animator.m_Avatar.TryGet(out AssetStudio.Avatar avatar) || avatar == null)
+                        continue;
+                    foreach (var pair in avatar.m_TOS ?? Array.Empty<KeyValuePair<uint, string>>())
+                    {
+                        if (!result.ContainsKey(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+                            result[pair.Key] = NormalizeClipPath(scene, pair.Value);
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static uint ComputeUnityPathHash(string value)
+        {
+            uint crc = 0xffffffffu;
+            var bytes = System.Text.Encoding.UTF8.GetBytes(value ?? "");
+            foreach (byte b in bytes)
+            {
+                crc ^= b;
+                for (int bit = 0; bit < 8; bit++)
+                    crc = (crc & 1u) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+            }
+            return ~crc;
+        }
+
+        private static string NormalizeClipPath(VisualLabPlaybackScene scene, string path)
+        {
+            path = (path ?? "").Replace('\\', '/').Trim('/');
+            if (path.Length == 0) return "";
+            if (string.Equals(path, scene.ModelName, StringComparison.Ordinal)) return "";
+            if (!string.IsNullOrWhiteSpace(scene.ModelName) &&
+                path.StartsWith(scene.ModelName + "/", StringComparison.Ordinal))
+                path = path.Substring(scene.ModelName.Length + 1);
+
+            if (scene.Nodes.Any(node => string.Equals(node.Path, path, StringComparison.Ordinal)))
+                return path;
+
+            var suffixMatches = scene.Nodes
+                .Where(node => string.Equals(node.Name, path, StringComparison.Ordinal) ||
+                    (!string.IsNullOrEmpty(node.Path) && (path.EndsWith("/" + node.Path, StringComparison.Ordinal) ||
+                    node.Path.EndsWith("/" + path, StringComparison.Ordinal))))
+                .Take(2).ToArray();
+            return suffixMatches.Length == 1 ? suffixMatches[0].Path : path;
         }
 
         private static T FindObject<T>(AssetsManager manager, Dictionary<string, string> workspaceToOriginal, string[] originals, string sourcePath, long pathId, string workspace) where T : UnityObject
