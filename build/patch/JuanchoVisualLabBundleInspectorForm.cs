@@ -525,22 +525,6 @@ namespace AssetStudioGUI
                 cardsAdded += AddMaterialCard(material);
                 if (cardsAdded >= 32) break;
             }
-            if (obj is Material selectedMaterial)
-            {
-                cardsAdded += AddTextureCardsFromMaterial(selectedMaterial, "Selected material");
-            }
-            else if (obj is Renderer selectedRenderer)
-            {
-                foreach (var mat in ResolveMaterials(selectedRenderer)) cardsAdded += AddTextureCardsFromMaterial(mat, "Renderer material");
-            }
-            else if (obj is Mesh selectedMesh)
-            {
-                foreach (var mat in FindMaterialsForMesh(selectedMesh)) cardsAdded += AddTextureCardsFromMaterial(mat, "Mesh material");
-            }
-            else if (obj is Texture2D selectedTexture && _texturePreview.Image == null)
-            {
-                _textureInfo.Text = TextureMetadata(selectedTexture);
-            }
 
             if (cardsAdded == 0 && !(obj is Texture2D))
                 _textureInfo.Text = "No material texture slots were resolved for this selection. A renderer may have no material, the shader may store textures outside the parsed saved properties, or the texture may be external/not included in the selected package.";
@@ -622,8 +606,7 @@ namespace AssetStudioGUI
         private int AddMaterialCard(Material material)
         {
             if (material == null) return 0;
-            var count = AddTextureCardsFromMaterial(material, material.m_Name);
-            return Math.Max(1, count);
+            return AddTextureCardsFromMaterial(material, material.m_Name);
         }
 
         private int AddTextureCardsFromMaterial(Material material, string title)
@@ -636,6 +619,12 @@ namespace AssetStudioGUI
                 try { slot.Value?.m_Texture?.TryGet(out texture); } catch { }
                 var display = texture as Texture2D;
                 var panel = new Panel { Width = 190, Height = 190, Margin = new Padding(6), BorderStyle = BorderStyle.FixedSingle };
+                var picture = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(38, 38, 42) };
+                if (display != null)
+                {
+                    picture.Image = TryConvertTexture(display, out var diagnostic);
+                }
+                panel.Controls.Add(picture);
                 var caption = new Label
                 {
                     Text = title + "\r\n" + slot.Key + "\r\n" + (texture == null ? "(empty / unresolved)" : GetObjectName(texture)),
@@ -643,19 +632,10 @@ namespace AssetStudioGUI
                     Height = 46,
                     AutoEllipsis = true
                 };
+                if (display != null && picture.Image == null)
+                    caption.Text += "\r\nDecode failed.";
                 panel.Controls.Add(caption);
-                if (display != null)
-                {
-                    var picture = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(38, 38, 42), Top = 46 };
-                    picture.Image = TryConvertTexture(display, out var diagnostic);
-                    if (picture.Image == null)
-                    {
-                        picture.Image = null;
-                        caption.Text += "\r\nDecode failed: " + diagnostic;
-                    }
-                    panel.Controls.Add(picture);
-                    picture.BringToFront();
-                }
+                caption.BringToFront();
                 _materialTextureCards.Controls.Add(panel);
                 added++;
                 if (added >= 16) break;
@@ -695,7 +675,7 @@ namespace AssetStudioGUI
                 _texturePreview.Image = null;
                 old.Dispose();
             }
-            foreach (Control control in _materialTextureCards.Controls)
+            foreach (Control control in _materialTextureCards.Controls.Cast<Control>().ToArray())
             {
                 DisposeControlImages(control);
                 control.Dispose();
@@ -846,7 +826,7 @@ namespace AssetStudioGUI
                 texture.m_StreamData.path + " · offset " + texture.m_StreamData.offset + " · bytes " + texture.m_StreamData.size);
             return string.Format("Texture2D: {0} × {1}\r\nFormat: {2}\r\nMip count: {3}\r\nReadable mip/image data: {4}\r\nStream: {5}",
                 texture.m_Width, texture.m_Height, texture.m_TextureFormat, texture.m_MipCount,
-                texture.image_data?.size ?? 0, streamInfo);
+                texture.image_data?.Size ?? 0, streamInfo);
         }
 
         private static string ResolveTransformName(PPtr<Transform> pointer)
@@ -956,7 +936,7 @@ namespace AssetStudioGUI
             foreach (var file in files.Skip(1))
             {
                 var directory = Path.GetDirectoryName(SafeFullPath(file));
-                while (!string.IsNullOrWhiteSpace(common) && !DirectoryEqualsOrContains(directory, common))
+                while (!string.IsNullOrWhiteSpace(common) && !DirectoryEqualsOrContains(common, directory))
                     common = Path.GetDirectoryName(common);
             }
             return string.IsNullOrWhiteSpace(common) ? Path.GetPathRoot(SafeFullPath(files[0])) : common;
