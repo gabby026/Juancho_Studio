@@ -16,6 +16,8 @@ namespace Juancho.VisualLab
         public string Key { get; set; } = "";
         public string Name { get; set; } = "";
         public string ClassName { get; set; } = "";
+        public string Role { get; set; } = "Other";
+        public string PreviewReadiness { get; set; } = "Not assessed";
         public long PathId { get; set; }
         public string SerializedFileName { get; set; } = "";
         public string SourceBundlePath { get; set; } = "";
@@ -126,6 +128,7 @@ namespace Juancho.VisualLab
                             Platform = serializedFile.m_TargetPlatform.ToString(),
                             SerializedBytes = obj.byteSize
                         };
+                        ClassifyRole(item);
                         items.Add(item);
                     }
                 }
@@ -231,6 +234,89 @@ namespace Juancho.VisualLab
             result.CompletedAtUtc = DateTime.UtcNow;
             result.DurationMilliseconds = Math.Max(0, (long)(result.CompletedAtUtc - result.StartedAtUtc).TotalMilliseconds);
             return result;
+        }
+
+        private static void ClassifyRole(VisualLabUnityAssetItem item)
+        {
+            if (item == null) return;
+            var type = item.ClassName ?? "";
+            var name = item.Name ?? "";
+            var path = item.SourceBundlePath ?? "";
+            var normalizedType = type.Trim();
+
+            if (Matches(normalizedType, "AnimationClip", "Animator", "Animation", "AnimatorController", "AnimatorOverrideController", "Avatar", "HumanDescription"))
+            {
+                item.Role = "Animation";
+                item.PreviewReadiness = normalizedType == "AnimationClip"
+                    ? "Clip indexed; rig binding and playback bridge pending"
+                    : "Controller/rig metadata indexed; runtime wiring pending";
+                return;
+            }
+
+            if (Matches(normalizedType, "ParticleSystem", "ParticleSystemRenderer", "TrailRenderer", "LineRenderer", "Projector", "LensFlare", "Shuriken"))
+            {
+                item.Role = "Visual effects";
+                item.PreviewReadiness = "Effect component indexed; renderer reconstruction pending";
+                return;
+            }
+
+            if (Matches(normalizedType, "SkinnedMeshRenderer", "MeshRenderer", "MeshFilter", "Mesh", "SpriteRenderer"))
+            {
+                item.Role = "Model geometry";
+                item.PreviewReadiness = normalizedType == "Mesh"
+                    ? "Mesh data available to exporter; live viewport bridge pending"
+                    : "Renderer reference indexed; model assembly pending";
+                return;
+            }
+
+            if (Matches(normalizedType, "Material", "Shader", "Texture2D", "Texture", "Sprite"))
+            {
+                item.Role = "Material / texture";
+                item.PreviewReadiness = "Appearance asset indexed; shader/platform compatibility must be checked";
+                return;
+            }
+
+            if (Matches(normalizedType, "GameObject", "Transform", "RectTransform"))
+            {
+                item.Role = "Scene hierarchy";
+                item.PreviewReadiness = "Object indexed; hierarchy reconstruction pending";
+                return;
+            }
+
+            if (Matches(normalizedType, "AudioClip", "AudioSource", "AudioListener"))
+            {
+                item.Role = "Audio";
+                item.PreviewReadiness = "Audio reference indexed; playback bridge pending";
+                return;
+            }
+
+            if ((normalizedType == "MonoBehaviour" || normalizedType == "Unknown") &&
+                ContainsAny(path + " " + name, "skill", "effect", "eff_", "shifa", "hit", "trail"))
+            {
+                item.Role = "Skill / effect data (heuristic)";
+                item.PreviewReadiness = "Name/path hint only; inspect serialized fields before classifying behavior";
+                return;
+            }
+
+            if (normalizedType == "MonoBehaviour")
+            {
+                item.Role = "Game-specific component";
+                item.PreviewReadiness = "Serialized data indexed; game-specific code may be unavailable";
+                return;
+            }
+
+            item.Role = "Other";
+            item.PreviewReadiness = "Metadata indexed; support not assessed";
+        }
+
+        private static bool Matches(string value, params string[] candidates)
+        {
+            return candidates.Any(candidate => string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static bool ContainsAny(string value, params string[] candidates)
+        {
+            return candidates.Any(candidate => value.IndexOf(candidate, StringComparison.OrdinalIgnoreCase) >= 0);
         }
 
         private static string[] CopyInputsToWorkspace(
