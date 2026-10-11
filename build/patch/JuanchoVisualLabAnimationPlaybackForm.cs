@@ -519,9 +519,10 @@ namespace Juancho.VisualLab
         private static string Identity(UnityObject obj) =>
             (obj?.assetsFile?.fullName ?? obj?.assetsFile?.originalPath ?? "?") + "|" + (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
 
+        // Unity serializes column-vector matrices; transpose to System.Numerics row-vector convention.
         private static NMatrix ToNumerics(AssetStudio.Matrix4x4 m) =>
-            new NMatrix(m.M00, m.M01, m.M02, m.M03, m.M10, m.M11, m.M12, m.M13,
-                m.M20, m.M21, m.M22, m.M23, m.M30, m.M31, m.M32, m.M33);
+            new NMatrix(m.M00, m.M10, m.M20, m.M30, m.M01, m.M11, m.M21, m.M31,
+                m.M02, m.M12, m.M22, m.M32, m.M03, m.M13, m.M23, m.M33);
 
         private static float[] ReadNormals(float[] source, int vertexCount)
         {
@@ -683,7 +684,12 @@ namespace AssetStudioGUI
             top.Controls.Add(new Label { Text = "AnimationClip:", AutoSize = true, Padding = new Padding(8, 6, 0, 0) });
             _clipCombo.DropDownStyle = ComboBoxStyle.DropDownList; _clipCombo.Width = 370;
             foreach (var item in _assets.Where(a => string.Equals(a.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase))
-                .OrderBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
+                .OrderByDescending(a =>
+                {
+                    var hint = (a.Name + " " + a.SourceBundlePath).ToLowerInvariant();
+                    return hint.Contains("skill") || hint.Contains("ultimate") || hint.Contains("attack") || hint.Contains("spell") ? 1 : 0;
+                })
+                .ThenBy(a => a.Name, StringComparer.OrdinalIgnoreCase))
                 _clipCombo.Items.Add(new AssetChoice(item));
             if (_clipCombo.Items.Count > 0) _clipCombo.SelectedIndex = 0;
             _loadButton.Text = "Load Model + Clip"; _loadButton.AutoSize = true;
@@ -724,6 +730,11 @@ namespace AssetStudioGUI
 
             root.Controls.Add(top, 0, 0); root.Controls.Add(viewportHost, 0, 1); root.Controls.Add(bottom, 0, 2);
             Controls.Add(root);
+            Shown += async (s, e) =>
+            {
+                if (_rootCombo.SelectedItem != null && _clipCombo.SelectedItem != null)
+                    await LoadPreviewAsync();
+            };
             _timer.Tick += Timer_Tick;
             FormClosed += (s, e) => { _timer.Stop(); _gl.Dispose(); };
         }
