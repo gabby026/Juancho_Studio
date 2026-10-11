@@ -7,6 +7,8 @@ $coreSource = Join-Path $workspace 'build\patch\JuanchoVisualLabCore.cs'
 $coreTarget = Join-Path $gui 'JuanchoVisualLabCore.cs'
 $formSource = Join-Path $workspace 'build\patch\JuanchoVisualLabForm.cs'
 $formTarget = Join-Path $gui 'JuanchoVisualLabForm.cs'
+$meshPreviewSource = Join-Path $workspace 'build\patch\JuanchoVisualLabMeshPreviewForm.cs'
+$meshPreviewTarget = Join-Path $gui 'JuanchoVisualLabMeshPreviewForm.cs'
 $indexerSource = Join-Path $workspace 'build\patch\JuanchoVisualLabUnityIndexer.cs'
 $indexerTarget = Join-Path $gui 'JuanchoVisualLabUnityIndexer.cs'
 
@@ -14,10 +16,12 @@ if (-not (Test-Path $formPath)) { throw "AssetStudioGUIForm.cs was not found at 
 if (-not (Test-Path $coreSource)) { throw "Visual Lab core source was not found at $coreSource" }
 if (-not (Test-Path $formSource)) { throw "Visual Lab form source was not found at $formSource" }
 if (-not (Test-Path $indexerSource)) { throw "Visual Lab Unity indexer source was not found at $indexerSource" }
+if (-not (Test-Path $meshPreviewSource)) { throw "Visual Lab static mesh viewport source was not found at $meshPreviewSource" }
 
 Copy-Item $coreSource $coreTarget -Force
 Copy-Item $formSource $formTarget -Force
 Copy-Item $indexerSource $indexerTarget -Force
+Copy-Item $meshPreviewSource $meshPreviewTarget -Force
 
 $formText = Get-Content $formPath -Raw
 $marker = 'JUANCHO_VISUAL_LAB_MENU_START'
