@@ -142,17 +142,18 @@ The current UI exposes Package Explorer, Serialized Objects, Skill Timeline, Run
 - [x] Extract standalone Mesh vertex/index data from isolated source copies without writing to original bundles.
 - [x] Walk a selected GameObject's Transform descendants and combine available MeshFilter / SkinnedMeshRenderer meshes into one static preview, applying their transform hierarchy.
 - [ ] Validate both standalone Mesh and GameObject hierarchy previews against the real Nana fixture.
-- [ ] Compare bind-pose static geometry against expected model shape; skinning deformation remains disabled.
+- [ ] Compare static and CPU-skinned playback geometry against the expected model shape.
 - [ ] Assign the correct recovered texture and material.
 - [ ] Verify rig transforms and coordinate handedness.
 
 ### M4 — AnimationClip inspection and runtime
 - [x] Inspect clip duration, sample rate, legacy/compression flags, curve channel names and bindings, key counts, and embedded animation events from serialized data.
 - [x] Expose playback-readiness notes that distinguish direct Transform curves from humanoid/muscle clips requiring rig/Avatar reconstruction.
-- [ ] Implement a playback adapter for supported direct Transform curves.
-- [ ] Bind to the correct rig and reconstruct supported humanoid/muscle data.
-- [ ] Add play/pause/stop/loop/scrub/speed controls.
-- [ ] Verify with at least one real clip and compare against source metadata.
+- [x] Implement an initial playback adapter for direct position/scale/quaternion/Euler curves and supported compressed quaternion keys.
+- [x] Bind discovered hierarchy nodes and attempt CPU skinning when vertex weights, bind poses, and renderer bone references are present.
+- [x] Add play/pause/stop/loop/scrub/speed controls and an orbit/pan/zoom viewport.
+- [ ] Validate bone mapping, matrix conventions, model proportions, and one real clip against the Nana fixture on Windows.
+- [ ] Support Humanoid/muscle-only clips with Avatar reconstruction, AnimatorController/state transitions, and Unity-equivalent interpolation/root motion.
 
 ### M5 — Effects runtime
 - [ ] Render one recoverable effect.
@@ -170,7 +171,7 @@ The current UI exposes Package Explorer, Serialized Objects, Skill Timeline, Run
 - [x] Windows x64 foundation build and ZIP packaging succeeded in GitHub Actions.
 - [x] Automated smoke tests in CI passed for package scanning, SHA-256 inventory, source-preservation checks, export path protection, sequence save/reload, and timeline validation.
 - [ ] Manually launch the packaged app on a clean Windows machine.
-- [ ] Import and analyze the complete local Nana fixture in the GUI, then verify a selected Mesh in the static viewport.
+- [ ] Scan the complete local Nana fixture; verify model selection, clip playback, skinning, and a representative skill animation in the interactive player.
 - [ ] Record source hashes before and after the GUI-level test to confirm the files remain unchanged.
 - [x] Document supported/unsupported asset classes and current playback limitations.
 
