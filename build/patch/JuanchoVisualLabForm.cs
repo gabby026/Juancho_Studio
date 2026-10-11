@@ -358,8 +358,9 @@ namespace AssetStudioGUI
                 Location = new Point(22, 22)
             };
             _runtimeStatus.Text =
-                "This foundation build implements safe package inventory, SHA-256 duplicate detection, scan reports, and a saved manual timeline format. It does not yet claim to render MLBB models, play extracted AnimationClips, or reproduce Unity particle systems. Those require the next runtime milestone and validation against a real hero package.\r\n\r\n" +
-                "The source tree is not modified by scanning. Scan reports and sequence projects are blocked from being saved inside imported source folders. Timeline event times can be authored and persisted now; runtime playback will be added after the Unity asset reconstruction path is proven.";
+                "Implemented in this foundation: read-only package inventory, SHA-256 duplicate detection, scan reports, AssetStudio-backed serialized-object indexing, PPtr dependency inspection, and a saved manual skill timeline. The dependency table reports actual references found in the selected parsed bundle set.\r\n\r\n" +
+                "Not implemented yet: a live skinned-mesh scene renderer, reconstructed AnimationClip playback, full MLBB ParticleSystem/shader reproduction, and executable timeline playback. Those remain gated on a real runtime proof-of-concept using a complete hero package.\r\n\r\n" +
+                "Source bundles are never edited by Visual Lab scanning or object indexing. Scan reports and sequence projects are blocked from being saved inside imported source folders. Import paths and serialized asset identifiers are retained for later runtime binding.";
             _runtimeStatus.AutoSize = false;
             _runtimeStatus.Location = new Point(22, 58);
             _runtimeStatus.Width = 850;
