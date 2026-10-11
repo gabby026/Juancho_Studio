@@ -744,7 +744,7 @@ namespace AssetStudioGUI
             bottom.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true };
             _playButton.Click += (s, e) => TogglePlayback();
-            _stopButton.Click += (s, e) => { _playing = false; _timer.Stop(); _time = 0; UpdateFrame(); };
+            _stopButton.Click += (s, e) => { _playing = false; _timer.Stop(); _clock.Stop(); _playButton.Text = "Play"; _time = 0; UpdateFrame(); };
             _loopCheck.CheckedChanged += (s, e) => UpdateFrame();
             _speedCombo.DropDownStyle = ComboBoxStyle.DropDownList; _speedCombo.Width = 86;
             foreach (var s in new[] { "0.25x", "0.5x", "1x", "1.5x", "2x" }) _speedCombo.Items.Add(s);
@@ -792,7 +792,7 @@ namespace AssetStudioGUI
             try
             {
                 _scene = await Juancho.VisualLab.VisualLabAnimationPlaybackLoader.LoadAsync(_inputFiles, root.Item, clip.Item);
-                _time = 0; _playing = false; _timer.Stop();
+                _time = 0; _playing = false; _timer.Stop(); _clock.Stop(); _playButton.Text = "Play";
                 _scene.Evaluate(0, _loopCheck.Checked);
                 FitViewToScene();
                 UpdateFrame();
@@ -898,7 +898,7 @@ void main(){ vec3 N=normalize(vNormal); vec3 L=normalize(vec3(0.45,0.8,0.35)); f
             if (_time >= _scene.Duration)
             {
                 if (_loopCheck.Checked) _time %= Math.Max(_scene.Duration, 0.0001f);
-                else { _time = _scene.Duration; _playing = false; _timer.Stop(); _playButton.Text = "Play"; }
+                else { _time = _scene.Duration; _playing = false; _timer.Stop(); _clock.Stop(); _playButton.Text = "Play"; }
             }
             UpdateFrame();
         }
