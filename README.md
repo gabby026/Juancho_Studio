@@ -14,7 +14,8 @@ Current capabilities:
 - Inspect resolved and unresolved PPtr dependencies across the selected package.
 - Inspect AnimationClip duration, sample rate, curve bindings/key counts, embedded events, and playback-readiness diagnostics.
 - Preview one static `Mesh` or combine an indexed `GameObject` hierarchy into an interactive 3D viewport.
-- The **Inspect hero_skin as Prefab** workspace parses the selected `hero_<heroname>_skin.unity3d` as a Unity-style object graph. It builds a GameObject/Transform hierarchy, exposes component nodes, indexed SkinnedMeshRenderer bones, mesh references, material slots, Shader references, and saved texture-property links; it also lists all parsed objects in that bundle by serialized class and Path ID. Selecting a Texture2D decodes and previews the image using AssetStudio's texture decoder. Selecting a GameObject, renderer, mesh or material displays its related material texture slots and thumbnails when references/data can be resolved. It reports the serialized-vs-parsed object count so unsupported types are visible instead of silently implied to be loaded.
+- The **Inspect hero_skin as Prefab** workspace opens the selected `hero_<heroname>_skin.unity3d` as a Unity-style serialized object graph. It builds the actual GameObject/Transform/component hierarchy, exposes indexed SkinnedMeshRenderer bone and Mesh references, material slots, Shader references, texture-property links, local transform values, and object Path IDs. **All parsed objects** are grouped by Unity class; serialized entries AssetStudio cannot instantiate are listed separately with their class ID, Path ID, file, byte offset and size rather than being silently omitted.
+- Select a `Texture2D` to decode and inspect the image. Select a GameObject, renderer, mesh, material or texture to trace its related components/material slots. The **3D Preview with Texture Maps** reads Mesh vertices/normals/UV0 and submesh index ranges, resolves material slots and texture maps (preferring standard main/base-map property names, with fallback to another resolved texture), applies material tint and UV scale/offset, and draws a textured preview. It attempts CPU skinning from the bundle's bind poses, bone indices, weights and bone Transform hierarchy when that data resolves.
 - The interactive player specifically discovers `hero_<heroname>_skin.unity3d` and requires that same bundle to contain a `Mesh`, a `GameObject` hierarchy, and `AnimationClip` objects. It lists model roots and all AnimationClips from that hero-skin bundle only; selecting another clip loads its preview so you can inspect skills individually. Playback supports play/pause/stop, scrubbing, loop, speed, orbit/pan/zoom, and best-effort CPU skinning from recovered weights, bind poses, bone references, and hierarchy transforms. It decodes direct curves plus supported streamed, dense, constant and compressed-rotation channels.
 - Filter discovered objects by likely role: model geometry, animation, visual effects, material/texture, scene hierarchy, audio, or game-specific component. Role labels are classification hints; preview readiness is shown separately.
 - Save a scan report and author/save/reopen manually timed skill-sequence projects.
@@ -22,14 +23,14 @@ Current capabilities:
 
 ## What is not implemented yet
 
-This is a foundation build, **not yet the complete live simulator**. Interactive playback is an initial reconstruction adapter, not a replacement for Unity's full Animator. The new prefab inspector shows material texture-slot images, but the 3D preview does not yet reproduce Unity's full material/shader renderer. It does not yet:
-- render material textures on reconstructed mesh surfaces with full Unity shader, UV-transform, normal-map, transparency, and blend-mode parity;
-- guarantee correct skinned-mesh binding when bone references or dependencies are missing/mismatched; the first CPU skinning adapter is still unvalidated against a real MLBB package;
+This is a foundation build, **not yet Unity Editor/runtime parity**. The texture-aware 3D preview is a custom renderer over parsed data, not Unity's platform-specific rendering pipeline. It can show the selected material's primary texture on geometry, but it does not yet:
+- reproduce the original MLBB/Unity shaders, additional normal/metallic/emission maps, UV animation, shader keywords, render queues, alpha clipping, blend modes, or exact lighting;
+- guarantee correct mesh/bone coordinate spaces or skin binding if the game asset has unsupported vertex layouts, missing cross-bundle references, Avatar-driven deformers, or mismatched bind poses; the new textured skinned preview has not yet been validated in the Windows GUI against a real MLBB package;
 - reproduce Unity's exact curve tangents/interpolation, AnimatorControllers, or Humanoid/muscle-only clips requiring Avatar reconstruction;
 - simulate Unity ParticleSystem / TrailRenderer effects;
 - play particle/trail effects or the saved skill timeline as an executable multi-track sequence.
 
-The separate static Mesh/GameObject preview remains static; use the **Interactive Model + Animation Player** for supported curve playback and best-effort CPU skinning. A listed reference or resolved pointer does not mean an asset is fully renderable or its gameplay behavior is available.
+The legacy **Preview Selected Model / Mesh** viewport is still a separate, solid diagnostic preview. For material maps use **Inspect hero_skin as Prefab → 3D Preview with Texture Maps**; for supported curve playback use **Interactive Model + Animation Player**. A listed reference or decoded texture does not prove the complete asset is renderable exactly as the game/Unity would render it.
 
 ## Source preservation
 
