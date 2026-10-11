@@ -40,6 +40,7 @@ namespace AssetStudioGUI
         private readonly Button _exportReportButton = new Button();
         private readonly Button _cancelButton = new Button();
         private readonly Button _analyzeObjectsButton = new Button();
+        private readonly Button _previewMeshButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private VisualLabUnityIndexResult _lastUnityIndex;
@@ -189,6 +190,11 @@ namespace AssetStudioGUI
             _roleFilter.SelectedIndex = 0;
             _roleFilter.SelectedIndexChanged += RoleFilter_SelectedIndexChanged;
             toolbar.Controls.Add(_roleFilter);
+            _previewMeshButton.Text = "Preview Selected Mesh (static)";
+            _previewMeshButton.AutoSize = true;
+            _previewMeshButton.Enabled = false;
+            _previewMeshButton.Click += async (s, e) => await PreviewSelectedMeshAsync();
+            toolbar.Controls.Add(_previewMeshButton);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
             _objectCountStatus.Text = "No parsed objects";
@@ -198,7 +204,7 @@ namespace AssetStudioGUI
             ConfigureDependencyGrid();
             _unityObjectGrid.DataSource = _unityObjectItems;
             _dependencyGrid.DataSource = _dependencyItems;
-            _unityObjectGrid.SelectionChanged += (s, e) => RefreshDependenciesForSelectedObject();
+            _unityObjectGrid.SelectionChanged += (s, e) => { RefreshDependenciesForSelectedObject(); UpdateMeshPreviewButton(); };
 
             var split = new SplitContainer
             {
@@ -331,6 +337,57 @@ namespace AssetStudioGUI
                 _unityObjectGrid.ClearSelection();
                 _unityObjectGrid.Rows[rowIndex].Selected = true;
                 _unityObjectGrid.CurrentCell = _unityObjectGrid.Rows[rowIndex].Cells[0];
+            }
+        }
+
+        private void UpdateMeshPreviewButton()
+        {
+            var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            _previewMeshButton.Enabled = selected != null &&
+                string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase) &&
+                _lastUnityIndex != null;
+        }
+
+        private async Task PreviewSelectedMeshAsync()
+        {
+            var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            if (selected == null || !string.Equals(selected.ClassName, "Mesh", StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show(this, "Select an object whose Unity class is Mesh. Renderer and GameObject hierarchy previews are not connected in this step.",
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (_lastUnityIndex == null || _lastUnityIndex.InputFiles.Count == 0)
+            {
+                MessageBox.Show(this, "Analyze the Unity package first, then select a Mesh object.", "Juancho MLBB Visual Lab",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            SetScanning(true);
+            _progressBar.Style = ProgressBarStyle.Marquee;
+            _progressBar.MarqueeAnimationSpeed = 24;
+            _statusLabel.Text = "Preparing static mesh preview…";
+            _detailLabel.Text = selected.Name;
+            try
+            {
+                var preview = await VisualLabUnityIndexer.ExtractMeshPreviewAsync(_lastUnityIndex.InputFiles, selected);
+                using (var previewForm = new JuanchoVisualLabMeshPreviewForm(preview))
+                    previewForm.ShowDialog(this);
+                _statusLabel.Text = "Static mesh preview closed";
+            }
+            catch (Exception ex)
+            {
+                _statusLabel.Text = "Mesh preview failed";
+                MessageBox.Show(this,
+                    "The selected mesh could not be previewed. Original bundle files were not modified.\r\n\r\n" + ex.Message,
+                    "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            finally
+            {
+                _progressBar.Style = ProgressBarStyle.Blocks;
+                _progressBar.MarqueeAnimationSpeed = 0;
+                SetScanning(false);
             }
         }
 
@@ -743,6 +800,8 @@ namespace AssetStudioGUI
             _exportReportButton.Enabled = !scanning && _lastScan != null;
             _cancelButton.Enabled = scanning;
             _analyzeObjectsButton.Enabled = !scanning && _lastScan != null && _lastScan.Assets.Any(IsUnityInput);
+            UpdateMeshPreviewButton();
+            if (scanning) _previewMeshButton.Enabled = false;
             _progressBar.Visible = scanning;
             if (!scanning) _progressBar.Value = 0;
         }
