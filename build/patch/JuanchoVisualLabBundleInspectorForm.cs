@@ -320,12 +320,15 @@ namespace AssetStudioGUI
             var materials = _bundleObjects.OfType<Material>().Count();
             var textures = _bundleObjects.OfType<Texture2D>().Count();
             var clips = _bundleObjects.OfType<AnimationClip>().Count();
-            var selectedFileCount = _state.Files.Count(f => _state.SourceByFile.TryGetValue(f, out var src) &&
-                string.Equals(SafeFullPath(src), SafeFullPath(_currentBundle), StringComparison.OrdinalIgnoreCase));
+            var targetSerializedFiles = _state.Files.Where(f => _state.SourceByFile.TryGetValue(f, out var src) &&
+                string.Equals(SafeFullPath(src), SafeFullPath(_currentBundle), StringComparison.OrdinalIgnoreCase)).ToArray();
+            var selectedFileCount = targetSerializedFiles.Length;
+            var unparsedForBundle = targetSerializedFiles.Sum(f =>
+                Math.Max(0, (f.m_Objects?.Count ?? 0) - (f.Objects?.Count ?? 0)));
             _status.Text = string.Format(
-                "{0} · serialized files: {1} · parsed objects: {2:N0} · GameObjects: {3:N0} · Transforms/bones: {4:N0} · Renderers: {5:N0} · Meshes: {6:N0} · Materials: {7:N0} · Texture2D: {8:N0} · AnimationClips: {9:N0} · unparsed type entries: {10:N0}",
+                "{0} · serialized files: {1} · parsed objects: {2:N0} · GameObjects: {3:N0} · Transforms/bones: {4:N0} · Renderers: {5:N0} · Meshes: {6:N0} · Materials: {7:N0} · Texture2D: {8:N0} · AnimationClips: {9:N0} · unparsed entries in this bundle: {10:N0}",
                 Path.GetFileName(_currentBundle), selectedFileCount, _bundleObjects.Count, gameObjects, transformsCount,
-                renderers, meshes, materials, textures, clips, _state.UnparsedObjectCount);
+                renderers, meshes, materials, textures, clips, unparsedForBundle);
             _details.Text = "Select a hierarchy node or an object in All Bundle Objects.\r\n\r\nThis inspector reads actual serialized object references. The bundle tree is not a filename-based guess.";
             ClearAppearance();
         }
@@ -894,8 +897,11 @@ namespace AssetStudioGUI
 
         private static string ObjectIdentity(UnityObject obj)
         {
-            var fileName = obj?.assetsFile?.fileName ?? obj?.assetsFile?.fullName ?? "?";
-            return fileName + "|" + (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
+            var fileName = obj?.assetsFile?.fullName ?? "";
+            var originalPath = obj?.assetsFile?.originalPath ?? "";
+            var shortName = obj?.assetsFile?.fileName ?? "?";
+            return fileName + "|" + originalPath + "|" + shortName + "|" +
+                (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
         }
 
         private static bool IsHeroSkinBundle(string path)
