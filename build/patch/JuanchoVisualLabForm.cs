@@ -166,6 +166,98 @@ namespace AssetStudioGUI
             _assetGrid.Columns.Add(new DataGridViewCheckBoxColumn { DataPropertyName = "IsDuplicateContent", HeaderText = "Duplicate", Width = 75 });
         }
 
+        private Control BuildSerializedObjectsTab()
+        {
+            var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 2, Padding = new Padding(8) };
+            root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var info = new Label
+            {
+                AutoSize = true,
+                Padding = new Padding(0, 0, 0, 8),
+                Text = "Parse the scanned Unity bundles with AssetStudio. Select an object to inspect actual serialized PPtr references. Unresolved references may point to bundles not included in the scan."
+            };
+
+            ConfigureUnityObjectGrid();
+            ConfigureDependencyGrid();
+            _unityObjectGrid.DataSource = _unityObjectItems;
+            _dependencyGrid.DataSource = _dependencyItems;
+            _unityObjectGrid.SelectionChanged += (s, e) => RefreshDependenciesForSelectedObject();
+
+            var split = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Horizontal,
+                SplitterDistance = 330,
+                FixedPanel = FixedPanel.None
+            };
+            split.Panel1.Controls.Add(_unityObjectGrid);
+            split.Panel2.Controls.Add(_dependencyGrid);
+            split.Panel1MinSize = 140;
+            split.Panel2MinSize = 120;
+
+            root.Controls.Add(info, 0, 0);
+            root.Controls.Add(split, 0, 1);
+            return root;
+        }
+
+        private void ConfigureUnityObjectGrid()
+        {
+            _unityObjectGrid.Dock = DockStyle.Fill;
+            _unityObjectGrid.ReadOnly = true;
+            _unityObjectGrid.AllowUserToAddRows = false;
+            _unityObjectGrid.AllowUserToDeleteRows = false;
+            _unityObjectGrid.AllowUserToOrderColumns = true;
+            _unityObjectGrid.MultiSelect = false;
+            _unityObjectGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            _unityObjectGrid.AutoGenerateColumns = false;
+            _unityObjectGrid.RowHeadersVisible = false;
+            _unityObjectGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
+            _unityObjectGrid.Columns.Clear();
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Name", HeaderText = "Object name", Width = 220, MinimumWidth = 140 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "ClassName", HeaderText = "Unity class", Width = 150, MinimumWidth = 110 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "PathId", HeaderText = "Path ID", Width = 100 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "SerializedFileName", HeaderText = "Serialized file", Width = 230, MinimumWidth = 150 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "UnityVersion", HeaderText = "Unity version", Width = 120 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Platform", HeaderText = "Platform", Width = 100 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "DependencyCount", HeaderText = "References", Width = 90 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "UnresolvedDependencyCount", HeaderText = "Unresolved", Width = 90 });
+            _unityObjectGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Status", HeaderText = "Status", Width = 190 });
+        }
+
+        private void ConfigureDependencyGrid()
+        {
+            _dependencyGrid.Dock = DockStyle.Fill;
+            _dependencyGrid.ReadOnly = true;
+            _dependencyGrid.AllowUserToAddRows = false;
+            _dependencyGrid.AllowUserToDeleteRows = false;
+            _dependencyGrid.AllowUserToOrderColumns = true;
+            _dependencyGrid.MultiSelect = false;
+            _dependencyGrid.SelectionMode = DataGridViewSelectionMode.FullRowSelect;
+            _dependencyGrid.AutoGenerateColumns = false;
+            _dependencyGrid.RowHeadersVisible = false;
+            _dependencyGrid.AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.DisplayedCells;
+            _dependencyGrid.Columns.Clear();
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "MemberPath", HeaderText = "Serialized field", Width = 260, MinimumWidth = 160 });
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetFileName", HeaderText = "Target file", Width = 230, MinimumWidth = 140 });
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetPathId", HeaderText = "Target Path ID", Width = 100 });
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetName", HeaderText = "Target object", Width = 220, MinimumWidth = 130 });
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "TargetClassName", HeaderText = "Target class", Width = 150 });
+            _dependencyGrid.Columns.Add(new DataGridViewTextBoxColumn { DataPropertyName = "Status", HeaderText = "Resolution", Width = 160 });
+        }
+
+        private void RefreshDependenciesForSelectedObject()
+        {
+            var selected = _unityObjectGrid.CurrentRow?.DataBoundItem as VisualLabUnityAssetItem;
+            _dependencyItems.Clear();
+            if (selected == null || _lastUnityIndex == null) return;
+            foreach (var dependency in _lastUnityIndex.Dependencies.Where(x => string.Equals(x.SourceAssetKey, selected.Key, StringComparison.OrdinalIgnoreCase)))
+                _dependencyItems.Add(dependency);
+            _selectedAssetPath = selected.SourceBundlePath;
+            _detailLabel.Text = selected.ClassName + " · " + _dependencyItems.Count + " references";
+        }
+
         private Control BuildTimelineTab()
         {
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
