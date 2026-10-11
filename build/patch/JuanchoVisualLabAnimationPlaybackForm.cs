@@ -602,6 +602,8 @@ namespace Juancho.VisualLab
             var stride = Math.Max(1, vertexCount / 96);
             double standardError = 0;
             double alternateError = 0;
+            double standardMaxError = 0;
+            double alternateMaxError = 0;
             int samples = 0;
 
             for (int vertex = 0; vertex < vertexCount; vertex += stride)
@@ -628,8 +630,12 @@ namespace Juancho.VisualLab
                 if (weightTotal <= 0.00001f) continue;
                 standard /= weightTotal;
                 alternate /= weightTotal;
-                standardError += NVector3.Distance(standard, expected) / diagonal;
-                alternateError += NVector3.Distance(alternate, expected) / diagonal;
+                var standardNormalizedError = NVector3.Distance(standard, expected) / diagonal;
+                var alternateNormalizedError = NVector3.Distance(alternate, expected) / diagonal;
+                standardError += standardNormalizedError;
+                alternateError += alternateNormalizedError;
+                standardMaxError = Math.Max(standardMaxError, standardNormalizedError);
+                alternateMaxError = Math.Max(alternateMaxError, alternateNormalizedError);
                 samples++;
             }
 
@@ -641,20 +647,24 @@ namespace Juancho.VisualLab
 
             var standardMean = standardError / samples;
             var alternateMean = alternateError / samples;
-            var best = Math.Min(standardMean, alternateMean);
-            if (!double.IsFinite(best) || best > 0.04)
+            var standardScore = standardMean + standardMaxError * 0.10;
+            var alternateScore = alternateMean + alternateMaxError * 0.10;
+            part.SkinningMatrixOrder = alternateScore < standardScore ? 1 : 0;
+            var bestMean = part.SkinningMatrixOrder == 1 ? alternateMean : standardMean;
+            var bestMax = part.SkinningMatrixOrder == 1 ? alternateMaxError : standardMaxError;
+            if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.04 || bestMax > 0.20)
             {
                 part.SkinningStatus = string.Format(
-                    "Bind-pose calibration error {0:P1}; refusing unsafe skinning to prevent vertex spikes",
-                    best);
+                    "Bind-pose calibration mismatch (mean {0:P1}, worst sampled vertex {1:P1}); using rigid fallback to avoid stretched spikes",
+                    bestMean, bestMax);
                 return;
             }
 
-            part.SkinningMatrixOrder = alternateMean < standardMean ? 1 : 0;
             part.SkinningReliable = true;
             part.SkinningStatus = "Bind-pose calibrated (" +
                 (part.SkinningMatrixOrder == 1 ? "alternate matrix order" : "Unity bind-pose matrix order") +
-                ", mean rest error " + best.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
+                ", mean error " + bestMean.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
+                ", max sampled error " + bestMax.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
         }
 
         private static void BuildClip(VisualLabPlaybackScene scene, AssetStudio.AnimationClip clip, VisualLabUnityAssetItem item, List<AssetStudio.Transform> transforms)
