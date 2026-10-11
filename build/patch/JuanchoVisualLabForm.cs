@@ -617,7 +617,7 @@ namespace AssetStudioGUI
                 dialog.Description = "Select a complete MLBB hero or skin package folder.";
                 dialog.ShowNewFolderButton = false;
                 if (dialog.ShowDialog(this) == DialogResult.OK)
-                    await ScanAsync(new[] { dialog.SelectedPath });
+                    await ScanAsync(new[] { dialog.SelectedPath }, true);
             }
         }
 
@@ -629,15 +629,16 @@ namespace AssetStudioGUI
                 dialog.Filter = "Unity and companion assets|*.unity3d;*.bundle;*.assets;*.asset;*.ab;*.ress;*.resource;*.bytes;*.png;*.jpg;*.jpeg;*.tga;*.dds;*.ktx;*.astc;*.pvr;*.split*|All files|*.*";
                 dialog.Multiselect = true;
                 if (dialog.ShowDialog(this) == DialogResult.OK)
-                    await ScanAsync(dialog.FileNames);
+                    await ScanAsync(dialog.FileNames, true);
             }
         }
 
-        private async Task ScanAsync(IEnumerable<string> paths)
+        private async Task ScanAsync(IEnumerable<string> paths, bool autoAnalyzeAndOpenPlayer = false)
         {
             _scanCancellation?.Cancel();
             _scanCancellation?.Dispose();
             _scanCancellation = new CancellationTokenSource();
+            bool scanSucceeded = false;
             SetScanning(true);
             _assetItems.Clear();
             _lastScan = null;
@@ -654,6 +655,7 @@ namespace AssetStudioGUI
             try
             {
                 var result = await VisualLabPackageScanner.ScanAsync(paths, progress, _scanCancellation.Token);
+                scanSucceeded = true;
                 _lastScan = result;
                 RememberProtectedRoots(result.ProtectedSourceRoots);
                 foreach (var asset in result.Assets) _assetItems.Add(asset);
@@ -682,9 +684,14 @@ namespace AssetStudioGUI
             {
                 SetScanning(false);
             }
+
+            // A folder/bundle scan proceeds directly into object analysis, then opens the live preview player.
+            // Both steps still parse isolated temporary copies and leave imported source files untouched.
+            if (scanSucceeded && autoAnalyzeAndOpenPlayer && _lastScan != null && _lastScan.Assets.Any(IsUnityInput))
+                await AnalyzeUnityBundlesAsync(true);
         }
 
-        private async Task AnalyzeUnityBundlesAsync()
+        private async Task AnalyzeUnityBundlesAsync(bool openPlaybackWhenReady = true)
         {
             if (_lastScan == null)
             {
@@ -742,6 +749,23 @@ namespace AssetStudioGUI
                     RefreshDependenciesForSelectedObject();
                 } else {
                     _dependencyItems.Clear();
+                }
+
+                if (openPlaybackWhenReady)
+                {
+                    bool hasModelRoot = result.Assets.Any(x => string.Equals(x.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase));
+                    bool hasClip = result.Assets.Any(x => string.Equals(x.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase));
+                    if (hasModelRoot && hasClip)
+                    {
+                        _statusLabel.Text = "Opening interactive model + AnimationClip preview";
+                        OpenAnimationPlayback();
+                    }
+                    else
+                    {
+                        MessageBox.Show(this,
+                            "The package scan completed, but the loaded bundles did not expose both a GameObject model hierarchy and an AnimationClip. Try selecting the full hero/skin folder with its related animation bundles. No source files were changed.",
+                            "Juancho MLBB Visual Lab — Preview not ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
                 }
             }
             catch (Exception ex)
