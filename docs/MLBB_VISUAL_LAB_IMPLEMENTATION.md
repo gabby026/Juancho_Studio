@@ -101,7 +101,7 @@ Implement in slices:
 - **Skill Timeline:** multiple tracks, start/duration, source asset, enabled state, playhead and sequence playback.
 - **Diagnostics:** missing pointers, unsupported serialized classes, missing textures/materials, rig-binding failures, and runtime compatibility notes.
 
-The current foundation UI exposes Package Explorer, Skill Timeline, and an explicit Runtime Status tab. The status tab states the current playback limitation so users are not misled.
+The current UI exposes Package Explorer, Serialized Objects, Skill Timeline, Runtime Status, and an **Interactive Model + Animation Player**. The player reconstructs a selected GameObject hierarchy, reads one selected AnimationClip, evaluates directly keyed transform channels, deforms supported skinned mesh parts using recovered bone weights/bind poses, and offers play/pause/stop/scrub/loop/speed controls. It deliberately labels clips without supported direct transform channels as unsupported instead of presenting a fake animation.
 
 ## Safety and source-preservation rules
 
