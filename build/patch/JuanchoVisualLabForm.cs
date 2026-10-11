@@ -26,6 +26,7 @@ namespace AssetStudioGUI
         private readonly BindingList<VisualLabUnityAssetItem> _unityObjectItems = new BindingList<VisualLabUnityAssetItem>();
         private readonly BindingList<VisualLabUnityDependency> _dependencyItems = new BindingList<VisualLabUnityDependency>();
         private readonly Label _scanStatus = new Label();
+        private readonly Label _objectStatus = new Label();
         private readonly Label _runtimeStatus = new Label();
         private readonly TextBox _sequenceTitle = new TextBox();
         private readonly ToolStripProgressBar _progressBar = new ToolStripProgressBar();
@@ -172,12 +173,10 @@ namespace AssetStudioGUI
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var info = new Label
-            {
-                AutoSize = true,
-                Padding = new Padding(0, 0, 0, 8),
-                Text = "Parse the scanned Unity bundles with AssetStudio. Select an object to inspect actual serialized PPtr references. Unresolved references may point to bundles not included in the scan."
-            };
+            _objectStatus.AutoSize = true;
+            _objectStatus.MaximumSize = new Size(1240, 0);
+            _objectStatus.Padding = new Padding(0, 0, 0, 8);
+            _objectStatus.Text = "Scan a package and choose Analyze Unity Bundle Contents to enumerate actual serialized objects and cross-bundle PPtr references."
 
             ConfigureUnityObjectGrid();
             ConfigureDependencyGrid();
@@ -197,7 +196,7 @@ namespace AssetStudioGUI
             split.Panel1MinSize = 140;
             split.Panel2MinSize = 120;
 
-            root.Controls.Add(info, 0, 0);
+            root.Controls.Add(_objectStatus, 0, 0);
             root.Controls.Add(split, 0, 1);
             return root;
         }
@@ -652,6 +651,7 @@ namespace AssetStudioGUI
             _scanFilesButton.Enabled = !scanning;
             _exportReportButton.Enabled = !scanning && _lastScan != null;
             _cancelButton.Enabled = scanning;
+            _analyzeObjectsButton.Enabled = !scanning && _lastScan != null && _lastScan.Assets.Any(IsUnityInput);
             _progressBar.Visible = scanning;
             if (!scanning) _progressBar.Value = 0;
         }
