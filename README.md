@@ -12,6 +12,7 @@ Current capabilities:
 - Parse selected Unity inputs using isolated temporary copies.
 - Inspect serialized object names, Unity classes, source file, Path ID, Unity version, platform, and object-reference counts.
 - Inspect resolved and unresolved PPtr dependencies across the selected package.
+- Open an indexed `Mesh` object in an interactive static geometry viewport with orbit, pan, zoom, and wireframe controls.
 - Filter discovered objects by likely role: model geometry, animation, visual effects, material/texture, scene hierarchy, audio, or game-specific component. Role labels are classification hints; preview readiness is shown separately.
 - Save a scan report and author/save/reopen manually timed skill-sequence projects.
 - Prevent scan reports and new timeline files from being saved inside known imported source roots.
@@ -19,7 +20,7 @@ Current capabilities:
 ## What is not implemented yet
 
 This is a foundation build, **not yet the complete live simulator**. It does not currently provide:
-- a reconstructed, interactive 3D scene for the imported MLBB character;
+- a reconstructed, interactive 3D scene for the complete MLBB character hierarchy (only standalone static `Mesh` geometry can currently be viewed);
 - real-time AnimationClip playback or rig binding;
 - full Unity ParticleSystem / TrailRenderer simulation and custom shader reproduction;
 - execution of the skill timeline against animated models and effects.
