@@ -3,9 +3,18 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using AssetStudio;
+using OpenTK.Graphics.OpenGL;
+using GlMatrix4 = OpenTK.Mathematics.Matrix4;
+using GlVector3 = OpenTK.Mathematics.Vector3;
+using GlMathHelper = OpenTK.Mathematics.MathHelper;
+using NMatrix = System.Numerics.Matrix4x4;
+using NQuaternion = System.Numerics.Quaternion;
+using NVector2 = System.Numerics.Vector2;
+using NVector3 = System.Numerics.Vector3;
 using UnityObject = AssetStudio.Object;
 
 namespace AssetStudioGUI
@@ -121,6 +130,9 @@ namespace AssetStudioGUI
             var collapseButton = new Button { Text = "Collapse Hierarchy", AutoSize = true };
             collapseButton.Click += (s, e) => _hierarchyTree.CollapseAll();
             header.Controls.Add(collapseButton);
+            var previewButton = new Button { Text = "3D Preview with Texture Maps", AutoSize = true };
+            previewButton.Click += (s, e) => OpenTexturedPreview();
+            header.Controls.Add(previewButton);
 
             _leftTabs.Dock = DockStyle.Fill;
             var hierarchyTab = new TabPage("Prefab Hierarchy");
@@ -183,6 +195,65 @@ namespace AssetStudioGUI
             root.Controls.Add(split, 0, 1);
             root.Controls.Add(_status, 0, 2);
             Controls.Add(root);
+        }
+
+        private void OpenTexturedPreview()
+        {
+            if (_state == null || _bundleObjects.Count == 0)
+            {
+                MessageBox.Show(this, "Wait for the selected hero skin bundle to finish parsing first.", "Juancho Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            UnityObject selected = _hierarchyTree.SelectedNode?.Tag as UnityObject
+                ?? _objectsTree.SelectedNode?.Tag as UnityObject;
+            var focus = ResolveFocusGameObject(selected);
+            try
+            {
+                using (var preview = new JuanchoVisualLabTexturedMeshPreviewForm(_bundleObjects, focus))
+                    preview.ShowDialog(this);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Could not prepare a textured preview. Original bundle files were not modified.\r\n\r\n" + ex.Message,
+                    "Juancho Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private GameObject ResolveFocusGameObject(UnityObject obj)
+        {
+            if (obj is GameObject go) return go;
+            if (obj is Transform transform) return GetGameObject(transform);
+            if (obj is Component component)
+            {
+                try { if (component.m_GameObject != null && component.m_GameObject.TryGet(out GameObject componentGo)) return componentGo; } catch { }
+            }
+            if (obj is Mesh mesh)
+            {
+                foreach (var candidate in _bundleObjects.OfType<GameObject>())
+                {
+                    foreach (var component in GetComponents(candidate))
+                    {
+                        if (component is MeshFilter filter && ReferenceEquals(TryGet(filter.m_Mesh), mesh)) return candidate;
+                        if (component is SkinnedMeshRenderer skin && ReferenceEquals(TryGet(skin.m_Mesh), mesh)) return candidate;
+                    }
+                }
+            }
+            if (obj is Material material)
+            {
+                foreach (var candidate in _bundleObjects.OfType<GameObject>())
+                    if (GetComponents(candidate).OfType<Renderer>().Any(renderer => ResolveMaterials(renderer).Any(m => ReferenceEquals(m, material))))
+                        return candidate;
+            }
+            if (obj is Texture2D texture)
+            {
+                foreach (var candidate in _bundleObjects.OfType<GameObject>())
+                    if (GetComponents(candidate).OfType<Renderer>().Any(renderer => ResolveMaterials(renderer).Any(m =>
+                        (m.m_SavedProperties?.m_TexEnvs ?? Array.Empty<KeyValuePair<string, UnityTexEnv>>())
+                        .Any(slot => ReferenceEquals(TryGet(slot.Value?.m_Texture), texture)))))
+                        return candidate;
+            }
+            return null;
         }
 
         private async Task EnsureParsedAsync()
@@ -1006,6 +1077,822 @@ namespace AssetStudioGUI
             try { _state.Manager?.Clear(); } catch { }
             try { if (Directory.Exists(_state.Workspace)) Directory.Delete(_state.Workspace, true); } catch { }
             _state = null;
+        }
+    }
+}
+
+
+namespace AssetStudioGUI
+{
+    /// <summary>
+    /// Best-effort textured 3D preview assembled from Unity's serialized renderers,
+    /// mesh UVs, material texture slots and Transform/bone references. It does not
+    /// execute Unity's platform-specific MLBB shader programs.
+    /// </summary>
+    public sealed class JuanchoVisualLabTexturedMeshPreviewForm : Form
+    {
+        private sealed class TextureImage
+        {
+            public int Width;
+            public int Height;
+            public byte[] Bgra = Array.Empty<byte>();
+        }
+
+        private sealed class DrawPart
+        {
+            public string Name = "";
+            public string MaterialName = "";
+            public NVector3[] Positions = Array.Empty<NVector3>();
+            public NVector3[] Normals = Array.Empty<NVector3>();
+            public NVector2[] Uvs = Array.Empty<NVector2>();
+            public uint[] Indices = Array.Empty<uint>();
+            public string TextureKey = "";
+            public TextureImage Texture;
+            public System.Drawing.Color Tint = System.Drawing.Color.White;
+            public int Vao;
+            public int PositionBuffer;
+            public int NormalBuffer;
+            public int UvBuffer;
+            public int IndexBuffer;
+            public int GlTexture;
+        }
+
+        private readonly List<UnityObject> _objects;
+        private readonly HashSet<UnityObject> _objectSet;
+        private readonly GameObject _focus;
+        private readonly List<DrawPart> _parts = new List<DrawPart>();
+        private readonly Dictionary<string, TextureImage> _textures = new Dictionary<string, TextureImage>(StringComparer.OrdinalIgnoreCase);
+        private readonly OpenTK.GLControl _gl = new OpenTK.GLControl();
+        private readonly CheckBox _textureToggle = new CheckBox { Text = "Apply material texture maps", Checked = true, AutoSize = true };
+        private readonly CheckBox _wireframe = new CheckBox { Text = "Wireframe", AutoSize = true };
+        private readonly Label _status = new Label { AutoSize = true, MaximumSize = new System.Drawing.Size(1200, 0) };
+        private readonly System.Windows.Forms.Timer _unusedTimer = new System.Windows.Forms.Timer();
+        private bool _glReady;
+        private bool _built;
+        private bool _leftDrag;
+        private bool _panDrag;
+        private int _lastX;
+        private int _lastY;
+        private float _yaw = -0.55f;
+        private float _pitch = -0.32f;
+        private float _distance = 3.2f;
+        private float _panX;
+        private float _panY;
+        private GlMatrix4 _model = GlMatrix4.Identity;
+        private int _program;
+        private int _positionLocation;
+        private int _normalLocation;
+        private int _uvLocation;
+        private int _modelLocation;
+        private int _viewLocation;
+        private int _projectionLocation;
+        private int _hasTextureLocation;
+        private int _textureLocation;
+        private int _tintLocation;
+
+        public JuanchoVisualLabTexturedMeshPreviewForm(IEnumerable<UnityObject> allBundleObjects, GameObject focus)
+        {
+            _objects = (allBundleObjects ?? Enumerable.Empty<UnityObject>()).Where(x => x != null).ToList();
+            _objectSet = new HashSet<UnityObject>(_objects);
+            _focus = focus;
+            Text = "Juancho MLBB Visual Lab — Textured Model Preview" +
+                (focus == null ? " — whole hero skin bundle" : " — " + (focus.m_Name ?? "GameObject"));
+            StartPosition = FormStartPosition.CenterParent;
+            MinimumSize = new System.Drawing.Size(800, 560);
+            Size = new System.Drawing.Size(1220, 850);
+            Font = new System.Drawing.Font("Segoe UI", 9F);
+
+            var toolbar = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = true, Padding = new Padding(6) };
+            var reset = new Button { Text = "Reset View", AutoSize = true };
+            reset.Click += (s, e) => ResetView();
+            _textureToggle.CheckedChanged += (s, e) => _gl.Invalidate();
+            _wireframe.CheckedChanged += (s, e) => _gl.Invalidate();
+            toolbar.Controls.Add(reset);
+            toolbar.Controls.Add(_textureToggle);
+            toolbar.Controls.Add(_wireframe);
+            toolbar.Controls.Add(new Label
+            {
+                Text = "Left drag: rotate · Right/middle drag: pan · Wheel: zoom",
+                AutoSize = true,
+                Padding = new Padding(6, 7, 0, 0)
+            });
+
+            _gl.Dock = DockStyle.Fill;
+            _gl.BackColor = System.Drawing.Color.FromArgb(20, 23, 30);
+            _gl.Load += Gl_Load;
+            _gl.Paint += Gl_Paint;
+            _gl.Resize += (s, e) => _gl.Invalidate();
+            _gl.MouseDown += Gl_MouseDown;
+            _gl.MouseUp += Gl_MouseUp;
+            _gl.MouseMove += Gl_MouseMove;
+            _gl.MouseWheel += Gl_MouseWheel;
+            _gl.DoubleClick += (s, e) => ResetView();
+            _status.Dock = DockStyle.Bottom;
+            _status.Padding = new Padding(8);
+            _status.Text = "Preparing mesh, UV, bone and material links from the parsed hero bundle…";
+            Controls.Add(_gl);
+            Controls.Add(toolbar);
+            Controls.Add(_status);
+        }
+
+        private void Gl_Load(object sender, EventArgs e)
+        {
+            try
+            {
+                _gl.MakeCurrent();
+                if (!_built) BuildScene();
+                InitializeGl();
+                UploadGeometryAndTextures();
+                _glReady = true;
+                _gl.Invalidate();
+            }
+            catch (Exception ex)
+            {
+                _glReady = false;
+                _status.Text = "Textured viewport failed: " + ex.Message;
+            }
+        }
+
+        private void BuildScene()
+        {
+            var transformSet = new HashSet<Transform>(_objects.OfType<Transform>());
+            var worldCache = new Dictionary<Transform, NMatrix>();
+            var worldVisiting = new HashSet<Transform>();
+            NMatrix WorldOf(Transform transform)
+            {
+                if (transform == null) return NMatrix.Identity;
+                if (worldCache.TryGetValue(transform, out var cached)) return cached;
+                if (!worldVisiting.Add(transform)) return NMatrix.Identity;
+                var p = transform.m_LocalPosition;
+                var q = transform.m_LocalRotation;
+                var sc = transform.m_LocalScale;
+                var local = NMatrix.CreateScale(sc.X, sc.Y, sc.Z) *
+                    NMatrix.CreateFromQuaternion(new NQuaternion(q.X, q.Y, q.Z, q.W)) *
+                    NMatrix.CreateTranslation(p.X, p.Y, p.Z);
+                NMatrix world = local;
+                try
+                {
+                    if (transform.m_Father != null && transform.m_Father.TryGet(out Transform parent) &&
+                        parent != null && transformSet.Contains(parent))
+                        world = local * WorldOf(parent);
+                }
+                catch { }
+                worldVisiting.Remove(transform);
+                worldCache[transform] = world;
+                return world;
+            }
+
+            var transformToGo = new Dictionary<Transform, GameObject>();
+            foreach (var go in _objects.OfType<GameObject>())
+            {
+                var tr = FindTransform(go);
+                if (tr != null) transformToGo[tr] = go;
+            }
+
+            IEnumerable<GameObject> targets;
+            if (_focus != null)
+            {
+                var found = new List<GameObject>();
+                var seen = new HashSet<Transform>();
+                var start = FindTransform(_focus);
+                if (start != null)
+                {
+                    var stack = new Stack<Transform>();
+                    stack.Push(start);
+                    while (stack.Count > 0)
+                    {
+                        var current = stack.Pop();
+                        if (current == null || !seen.Add(current)) continue;
+                        var go = GetGameObject(current);
+                        if (go != null) found.Add(go);
+                        foreach (var childPtr in current.m_Children ?? Array.Empty<PPtr<Transform>>())
+                            if (childPtr != null && childPtr.TryGet(out Transform child) && child != null && transformSet.Contains(child))
+                                stack.Push(child);
+                    }
+                }
+                else found.Add(_focus);
+                targets = found;
+            }
+            else
+            {
+                // All GameObjects from the selected hero skin bundle; each renderer appears once.
+                targets = _objects.OfType<GameObject>().ToArray();
+            }
+
+            var visitedRenderers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var go in targets)
+            {
+                if (go == null) continue;
+                var components = GetComponents(go).ToArray();
+                var renderers = components.OfType<SkinnedMeshRenderer>().Cast<Renderer>()
+                    .Concat(components.OfType<MeshRenderer>())
+                    .Distinct()
+                    .ToArray();
+                foreach (var renderer in renderers)
+                {
+                    var renderKey = ObjectIdentity(renderer);
+                    if (!visitedRenderers.Add(renderKey)) continue;
+                    Mesh mesh = null;
+                    SkinnedMeshRenderer skinned = renderer as SkinnedMeshRenderer;
+                    if (skinned != null) TryGet(skinned.m_Mesh, out mesh);
+                    else
+                    {
+                        var filter = components.OfType<MeshFilter>().FirstOrDefault();
+                        if (filter != null) TryGet(filter.m_Mesh, out mesh);
+                    }
+                    if (mesh == null || mesh.m_VertexCount <= 0 || mesh.m_Vertices == null ||
+                        mesh.m_Vertices.Length < mesh.m_VertexCount * 3 ||
+                        mesh.m_Indices == null || mesh.m_Indices.Count < 3)
+                        continue;
+
+                    var transform = FindTransform(go);
+                    var nodeWorld = WorldOf(transform);
+                    var vertices = ExtractVertices(mesh);
+                    var normals = ExtractNormals(mesh, vertices);
+                    var uvs = ExtractUvs(mesh);
+                    if (skinned != null)
+                        ApplySkinning(mesh, skinned, vertices, normals, nodeWorld, WorldOf);
+                    else
+                    {
+                        for (int v = 0; v < vertices.Length; v++)
+                        {
+                            vertices[v] = NVector3.Transform(vertices[v], nodeWorld);
+                            normals[v] = NormalizeSafe(NVector3.TransformNormal(normals[v], nodeWorld));
+                        }
+                    }
+
+                    var materials = ResolveMaterials(renderer);
+                    var submeshes = mesh.m_SubMeshes ?? Array.Empty<SubMesh>();
+                    if (submeshes.Length == 0)
+                    {
+                        var material = materials.FirstOrDefault();
+                        AddDrawPart(mesh.m_Name, material, vertices, normals, uvs,
+                            mesh.m_Indices.Where(x => x < vertices.Length).ToArray(), null, NVector2.One, NVector2.Zero);
+                        continue;
+                    }
+
+                    int indexOffset = 0;
+                    bool rangesValid = submeshes.All(sub => sub.indexCount <= int.MaxValue) &&
+                        submeshes.Sum(sub => (long)sub.indexCount) == mesh.m_Indices.Count;
+                    if (!rangesValid)
+                    {
+                        var material = materials.FirstOrDefault();
+                        AddDrawPart(mesh.m_Name, material, vertices, normals, uvs,
+                            mesh.m_Indices.Where(x => x < vertices.Length).ToArray(), null, NVector2.One, NVector2.Zero);
+                        continue;
+                    }
+
+                    for (int slot = 0; slot < submeshes.Length; slot++)
+                    {
+                        var sub = submeshes[slot];
+                        int count = (int)sub.indexCount;
+                        if (count < 3 || indexOffset + count > mesh.m_Indices.Count)
+                        {
+                            indexOffset += count;
+                            continue;
+                        }
+                        var indices = mesh.m_Indices.Skip(indexOffset).Take(count).Where(x => x < vertices.Length).ToArray();
+                        indexOffset += count;
+                        var material = slot < materials.Count ? materials[slot] : materials.FirstOrDefault();
+                        AddDrawPart(mesh.m_Name, material, vertices, normals, uvs, indices, null, NVector2.One, NVector2.Zero);
+                    }
+                }
+            }
+
+            if (_parts.Count == 0)
+                throw new InvalidDataException("No drawable MeshFilter or SkinnedMeshRenderer parts were found in the chosen hierarchy. Expand the prefab tree, select a model GameObject, or verify that the hero skin bundle contains its Mesh objects.");
+
+            var min = new NVector3(float.PositiveInfinity, float.PositiveInfinity, float.PositiveInfinity);
+            var max = new NVector3(float.NegativeInfinity, float.NegativeInfinity, float.NegativeInfinity);
+            foreach (var part in _parts)
+                foreach (var p in part.Positions)
+                {
+                    min = NVector3.Min(min, p);
+                    max = NVector3.Max(max, p);
+                }
+            var center = (min + max) * 0.5f;
+            var size = max - min;
+            var diagonal = Math.Max(size.X, Math.Max(size.Y, size.Z));
+            var scale = 2.0f / Math.Max(diagonal, 0.00001f);
+            _model = GlMatrix4.CreateTranslation(-center.X, -center.Y, -center.Z) * GlMatrix4.CreateScale(scale);
+
+            int textured = _parts.Count(x => !string.IsNullOrWhiteSpace(x.TextureKey));
+            int distinctTextures = _textures.Count;
+            _status.Text = string.Format(
+                "Draw parts: {0:N0} · textured material slots: {1:N0} · decoded textures: {2:N0} · {3}",
+                _parts.Count, textured, distinctTextures,
+                _focus == null ? "whole hero skin bundle" : "selected GameObject hierarchy") +
+                " · diagnostic fallback for missing/unsupported textures; original Unity shaders are not executed.";
+            _built = true;
+        }
+
+        private void AddDrawPart(string meshName, Material material, NVector3[] positions, NVector3[] normals,
+            NVector2[] uvs, uint[] indices, string unusedTextureKey, NVector2 unusedScale, NVector2 unusedOffset)
+        {
+            if (indices == null || indices.Length < 3) return;
+            string textureKey = "";
+            TextureImage image = null;
+            var uvScale = NVector2.One;
+            var uvOffset = NVector2.Zero;
+            var tint = System.Drawing.Color.White;
+            if (material != null)
+            {
+                var colors = material.m_SavedProperties?.m_Colors ?? Array.Empty<KeyValuePair<string, AssetStudio.Color>>();
+                var color = colors.FirstOrDefault(x => string.Equals(x.Key, "_Color", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(x.Key, "_BaseColor", StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrWhiteSpace(color.Key))
+                    tint = System.Drawing.Color.FromArgb(ToByte(color.Value.A), ToByte(color.Value.R), ToByte(color.Value.G), ToByte(color.Value.B));
+
+                var textureSlots = material.m_SavedProperties?.m_TexEnvs ?? Array.Empty<KeyValuePair<string, UnityTexEnv>>();
+                var orderedSlots = textureSlots
+                    .OrderByDescending(slot => IsMainTextureProperty(slot.Key))
+                    .ThenBy(slot => slot.Key, StringComparer.OrdinalIgnoreCase);
+                foreach (var slot in orderedSlots)
+                {
+                    Texture texture = null;
+                    try { slot.Value?.m_Texture?.TryGet(out texture); } catch { }
+                    if (!(texture is Texture2D texture2D)) continue;
+                    textureKey = ObjectIdentity(texture2D);
+                    uvScale = slot.Value?.m_Scale == null ? NVector2.One :
+                        new NVector2(slot.Value.m_Scale.X, slot.Value.m_Scale.Y);
+                    uvOffset = slot.Value?.m_Offset == null ? NVector2.Zero :
+                        new NVector2(slot.Value.m_Offset.X, slot.Value.m_Offset.Y);
+                    if (!_textures.TryGetValue(textureKey, out image))
+                    {
+                        image = DecodeTexture(texture2D);
+                        if (image != null) _textures[textureKey] = image;
+                    }
+                    if (image != null) break;
+                    textureKey = "";
+                }
+            }
+
+            var adjustedUvs = new NVector2[uvs.Length];
+            for (int i = 0; i < uvs.Length; i++)
+                adjustedUvs[i] = new NVector2(uvs[i].X * uvScale.X + uvOffset.X, uvs[i].Y * uvScale.Y + uvOffset.Y);
+
+            _parts.Add(new DrawPart
+            {
+                Name = meshName ?? "(mesh)",
+                MaterialName = material?.m_Name ?? "(no material)",
+                Positions = positions,
+                Normals = normals,
+                Uvs = adjustedUvs,
+                Indices = indices,
+                TextureKey = textureKey,
+                Texture = image,
+                Tint = tint
+            });
+        }
+
+        private static bool IsMainTextureProperty(string key)
+        {
+            return string.Equals(key, "_MainTex", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "_BaseMap", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "_BaseColorMap", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "_BaseColorTexture", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "MainTex", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(key, "BaseMap", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static byte ToByte(float value)
+        {
+            if (float.IsNaN(value) || float.IsInfinity(value)) return 255;
+            return (byte)Math.Max(0, Math.Min(255, (int)Math.Round(value * 255f)));
+        }
+
+        private static TextureImage DecodeTexture(Texture2D texture)
+        {
+            try
+            {
+                using (var image = texture.ConvertToImage(true))
+                {
+                    if (image == null) return null;
+                    var bytes = image.ConvertToBytes();
+                    if (bytes == null || bytes.Length < texture.m_Width * texture.m_Height * 4) return null;
+                    return new TextureImage { Width = texture.m_Width, Height = texture.m_Height, Bgra = bytes };
+                }
+            }
+            catch { return null; }
+        }
+
+        private static NVector3[] ExtractVertices(Mesh mesh)
+        {
+            var result = new NVector3[mesh.m_VertexCount];
+            int stride = mesh.m_Vertices.Length / mesh.m_VertexCount;
+            if (stride < 3) throw new InvalidDataException("Mesh vertex data has an invalid stride.");
+            for (int i = 0; i < result.Length; i++)
+                result[i] = new NVector3(mesh.m_Vertices[i * stride], mesh.m_Vertices[i * stride + 1], mesh.m_Vertices[i * stride + 2]);
+            return result;
+        }
+
+        private static NVector3[] ExtractNormals(Mesh mesh, NVector3[] vertices)
+        {
+            var source = mesh.m_Normals;
+            var count = vertices.Length;
+            if (source != null && source.Length >= count * 3)
+            {
+                int stride = source.Length / count;
+                var result = new NVector3[count];
+                for (int i = 0; i < count; i++)
+                    result[i] = NormalizeSafe(new NVector3(source[i * stride], source[i * stride + 1], source[i * stride + 2]));
+                return result;
+            }
+
+            var normals = new NVector3[count];
+            foreach (var indices in GetAllIndices(mesh))
+            {
+                for (int i = 0; i + 2 < indices.Length; i += 3)
+                {
+                    int a = (int)indices[i], b = (int)indices[i + 1], c = (int)indices[i + 2];
+                    if (a >= count || b >= count || c >= count) continue;
+                    var n = NVector3.Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+                    normals[a] += n; normals[b] += n; normals[c] += n;
+                }
+            }
+            for (int i = 0; i < normals.Length; i++) normals[i] = NormalizeSafe(normals[i]);
+            return normals;
+        }
+
+        private static uint[][] GetAllIndices(Mesh mesh)
+        {
+            var result = new List<uint[]>();
+            if (mesh.m_SubMeshes != null && mesh.m_SubMeshes.Length > 0)
+            {
+                int offset = 0;
+                foreach (var sub in mesh.m_SubMeshes)
+                {
+                    int count = (int)Math.Min(int.MaxValue, sub.indexCount);
+                    if (count >= 0 && offset + count <= mesh.m_Indices.Count)
+                        result.Add(mesh.m_Indices.Skip(offset).Take(count).ToArray());
+                    offset += Math.Max(0, count);
+                }
+            }
+            else result.Add(mesh.m_Indices.ToArray());
+            return result.ToArray();
+        }
+
+        private static NVector2[] ExtractUvs(Mesh mesh)
+        {
+            int count = mesh.m_VertexCount;
+            var source = mesh.m_UV0;
+            var result = new NVector2[count];
+            if (source == null || source.Length < count * 2) return result;
+            int stride = source.Length / count;
+            if (stride < 2) return result;
+            for (int i = 0; i < count; i++)
+            {
+                float u = source[i * stride], v = source[i * stride + 1];
+                result[i] = new NVector2(u, v);
+            }
+            return result;
+        }
+
+        private static void ApplySkinning(Mesh mesh, SkinnedMeshRenderer renderer, NVector3[] positions,
+            NVector3[] normals, NMatrix rendererWorld, Func<Transform, NMatrix> worldOf)
+        {
+            var skin = mesh.m_Skin;
+            var bindPoses = mesh.m_BindPose;
+            var bones = renderer.m_Bones ?? Array.Empty<PPtr<Transform>>();
+            if (skin == null || skin.Length != positions.Length || bindPoses == null || bindPoses.Length == 0 || bones.Length == 0)
+            {
+                for (int i = 0; i < positions.Length; i++)
+                {
+                    positions[i] = NVector3.Transform(positions[i], rendererWorld);
+                    normals[i] = NormalizeSafe(NVector3.TransformNormal(normals[i], rendererWorld));
+                }
+                return;
+            }
+
+            for (int vertex = 0; vertex < positions.Length; vertex++)
+            {
+                var original = positions[vertex];
+                var originalNormal = normals[vertex];
+                NVector3 p = NVector3.Zero;
+                NVector3 n = NVector3.Zero;
+                float total = 0;
+                for (int k = 0; k < 4; k++)
+                {
+                    var weight = skin[vertex].weight[k];
+                    int boneIndex = skin[vertex].boneIndex[k];
+                    if (!IsFinite(weight) || weight <= 0 || boneIndex < 0 || boneIndex >= bindPoses.Length || boneIndex >= bones.Length)
+                        continue;
+                    Transform bone = null;
+                    try { bones[boneIndex]?.TryGet(out bone); } catch { }
+                    if (bone == null) continue;
+                    var matrix = ToNumerics(bindPoses[boneIndex]) * worldOf(bone);
+                    p += NVector3.Transform(original, matrix) * weight;
+                    n += NVector3.TransformNormal(originalNormal, matrix) * weight;
+                    total += weight;
+                }
+                if (total > 0.0001f)
+                {
+                    positions[vertex] = p / total;
+                    normals[vertex] = NormalizeSafe(n / total);
+                }
+                else
+                {
+                    positions[vertex] = NVector3.Transform(original, rendererWorld);
+                    normals[vertex] = NormalizeSafe(NVector3.TransformNormal(originalNormal, rendererWorld));
+                }
+            }
+        }
+
+        private static NMatrix ToNumerics(AssetStudio.Matrix4x4 m) =>
+            new NMatrix(m.M00, m.M10, m.M20, m.M30, m.M01, m.M11, m.M21, m.M31,
+                m.M02, m.M12, m.M22, m.M32, m.M03, m.M13, m.M23, m.M33);
+
+        private static NVector3 NormalizeSafe(NVector3 value)
+        {
+            var length = value.LengthSquared();
+            return IsFinite(length) && length > 1e-10f ? NVector3.Normalize(value) : NVector3.UnitY;
+        }
+
+        private static bool IsFinite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
+
+        private static Transform FindTransform(GameObject gameObject)
+        {
+            foreach (var component in GetComponents(gameObject))
+                if (component is Transform transform) return transform;
+            return null;
+        }
+
+        private static GameObject GetGameObject(Transform transform)
+        {
+            try { if (transform?.m_GameObject != null && transform.m_GameObject.TryGet(out GameObject go)) return go; } catch { }
+            return null;
+        }
+
+        private static IEnumerable<Component> GetComponents(GameObject gameObject)
+        {
+            foreach (var pointer in gameObject?.m_Components ?? Array.Empty<PPtr<Component>>())
+                if (pointer != null && pointer.TryGet(out Component component) && component != null)
+                    yield return component;
+        }
+
+        private static List<Material> ResolveMaterials(Renderer renderer)
+        {
+            var result = new List<Material>();
+            foreach (var pointer in renderer.m_Materials ?? Array.Empty<PPtr<Material>>())
+                try { if (pointer != null && pointer.TryGet(out Material material) && material != null) result.Add(material); } catch { }
+            return result;
+        }
+
+        private static T TryGet<T>(PPtr<T> pointer) where T : UnityObject
+        {
+            try { return pointer != null && pointer.TryGet(out T target) ? target : null; }
+            catch { return null; }
+        }
+
+        private string ObjectIdentity(UnityObject obj) =>
+            (obj?.assetsFile?.fullName ?? "") + "|" + (obj?.assetsFile?.originalPath ?? "") + "|" +
+            (obj?.assetsFile?.fileName ?? "?") + "|" + (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
+
+        private static void InitializeGl()
+        {
+            GL.ClearColor(System.Drawing.Color.FromArgb(20, 23, 30));
+            GL.Enable(EnableCap.DepthTest);
+            GL.DepthFunc(DepthFunction.Lequal);
+            GL.Disable(EnableCap.CullFace);
+        }
+
+        private void InitializeGl()
+        {
+            InitializeGl();
+            const string vertexSource = @"#version 330 core
+in vec3 vertexPosition;
+in vec3 normalDirection;
+in vec2 uvCoordinate;
+uniform mat4 modelMatrix;
+uniform mat4 viewMatrix;
+uniform mat4 projMatrix;
+out vec3 fragNormal;
+out vec2 fragUv;
+void main()
+{
+    gl_Position = projMatrix * viewMatrix * modelMatrix * vec4(vertexPosition, 1.0);
+    fragNormal = normalize(mat3(modelMatrix) * normalDirection);
+    fragUv = uvCoordinate;
+}";
+            const string fragmentSource = @"#version 330 core
+in vec3 fragNormal;
+in vec2 fragUv;
+uniform sampler2D diffuseMap;
+uniform int hasTexture;
+uniform vec4 tintColor;
+out vec4 outputColor;
+void main()
+{
+    vec3 n = normalize(fragNormal);
+    vec3 lightDir = normalize(vec3(-0.45, 0.78, 0.61));
+    float diffuse = max(dot(n, lightDir), 0.0);
+    float light = 0.28 + diffuse * 0.72;
+    vec4 base = hasTexture != 0 ? texture(diffuseMap, fragUv) : vec4(0.69, 0.75, 0.84, 1.0);
+    outputColor = vec4(base.rgb * tintColor.rgb * light, base.a * tintColor.a);
+}";
+            var vertex = CompileShader(ShaderType.VertexShader, vertexSource);
+            var fragment = CompileShader(ShaderType.FragmentShader, fragmentSource);
+            _program = GL.CreateProgram();
+            GL.AttachShader(_program, vertex);
+            GL.AttachShader(_program, fragment);
+            GL.LinkProgram(_program);
+            GL.GetProgram(_program, GetProgramParameterName.LinkStatus, out var linked);
+            var log = GL.GetProgramInfoLog(_program);
+            GL.DeleteShader(vertex);
+            GL.DeleteShader(fragment);
+            if (linked == 0) throw new InvalidOperationException("Textured material shader link failed: " + log);
+
+            _positionLocation = GL.GetAttribLocation(_program, "vertexPosition");
+            _normalLocation = GL.GetAttribLocation(_program, "normalDirection");
+            _uvLocation = GL.GetAttribLocation(_program, "uvCoordinate");
+            _modelLocation = GL.GetUniformLocation(_program, "modelMatrix");
+            _viewLocation = GL.GetUniformLocation(_program, "viewMatrix");
+            _projectionLocation = GL.GetUniformLocation(_program, "projMatrix");
+            _hasTextureLocation = GL.GetUniformLocation(_program, "hasTexture");
+            _textureLocation = GL.GetUniformLocation(_program, "diffuseMap");
+            _tintLocation = GL.GetUniformLocation(_program, "tintColor");
+        }
+
+        private static int CompileShader(ShaderType type, string source)
+        {
+            var shader = GL.CreateShader(type);
+            GL.ShaderSource(shader, source);
+            GL.CompileShader(shader);
+            GL.GetShader(shader, ShaderParameter.CompileStatus, out var compiled);
+            var log = GL.GetShaderInfoLog(shader);
+            if (compiled == 0)
+            {
+                GL.DeleteShader(shader);
+                throw new InvalidOperationException(type + " shader failed to compile: " + log);
+            }
+            return shader;
+        }
+
+        private void UploadGeometryAndTextures()
+        {
+            foreach (var part in _parts)
+            {
+                GL.GenVertexArrays(1, out part.Vao);
+                GL.BindVertexArray(part.Vao);
+
+                GL.GenBuffers(1, out part.PositionBuffer);
+                GL.BindBuffer(BufferTarget.ArrayBuffer, part.PositionBuffer);
+                var p = part.Positions.Select(v => new GlVector3(v.X, v.Y, v.Z)).ToArray();
+                GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(p.Length * GlVector3.SizeInBytes), p, BufferUsageHint.StaticDraw);
+                GL.VertexAttribPointer(_positionLocation, 3, VertexAttribPointerType.Float, false, 0, IntPtr.Zero);
+                GL.EnableVertexAttribArray(_positionLocation);
+
+                GL.GenBuffers(1, out part.NormalBuffer);
+                GL.BindBuffer(BufferTarget.ArrayBuffer, part.NormalBuffer);
+                var n = part.Normals.Select(v => new GlVector3(v.X, v.Y, v.Z)).ToArray();
+                GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(n.Length * GlVector3.SizeInBytes), n, BufferUsageHint.StaticDraw);
+                GL.VertexAttribPointer(_normalLocation, 3, VertexAttribPointerType.Float, false, 0, IntPtr.Zero);
+                GL.EnableVertexAttribArray(_normalLocation);
+
+                GL.GenBuffers(1, out part.UvBuffer);
+                GL.BindBuffer(BufferTarget.ArrayBuffer, part.UvBuffer);
+                var uv = part.Uvs.Select(v => new OpenTK.Mathematics.Vector2(v.X, v.Y)).ToArray();
+                GL.BufferData(BufferTarget.ArrayBuffer, (IntPtr)(uv.Length * OpenTK.Mathematics.Vector2.SizeInBytes), uv, BufferUsageHint.StaticDraw);
+                GL.VertexAttribPointer(_uvLocation, 2, VertexAttribPointerType.Float, false, 0, IntPtr.Zero);
+                GL.EnableVertexAttribArray(_uvLocation);
+
+                GL.GenBuffers(1, out part.IndexBuffer);
+                GL.BindBuffer(BufferTarget.ElementArrayBuffer, part.IndexBuffer);
+                GL.BufferData(BufferTarget.ElementArrayBuffer, (IntPtr)(part.Indices.Length * sizeof(uint)), part.Indices, BufferUsageHint.StaticDraw);
+
+                if (part.Texture != null && part.Texture.Width > 0 && part.Texture.Height > 0)
+                {
+                    GL.GenTextures(1, out part.GlTexture);
+                    GL.BindTexture(TextureTarget.Texture2D, part.GlTexture);
+                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
+                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
+                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.Repeat);
+                    GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.Repeat);
+                    var handle = GCHandle.Alloc(part.Texture.Bgra, GCHandleType.Pinned);
+                    try
+                    {
+                        GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba,
+                            part.Texture.Width, part.Texture.Height, 0, PixelFormat.Bgra,
+                            PixelType.UnsignedByte, handle.AddrOfPinnedObject());
+                    }
+                    finally { handle.Free(); }
+                }
+
+                GL.BindBuffer(BufferTarget.ArrayBuffer, 0);
+                GL.BindVertexArray(0);
+            }
+        }
+
+        private void Gl_Paint(object sender, PaintEventArgs e)
+        {
+            if (!_glReady || _gl.IsDisposed || _gl.ClientSize.Width <= 0 || _gl.ClientSize.Height <= 0) return;
+            try
+            {
+                _gl.MakeCurrent();
+                GL.Viewport(0, 0, _gl.ClientSize.Width, _gl.ClientSize.Height);
+                GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
+                GL.UseProgram(_program);
+                var view = GlMatrix4.CreateTranslation(_panX, _panY, -_distance) *
+                    GlMatrix4.CreateRotationX(_pitch) * GlMatrix4.CreateRotationY(_yaw);
+                var aspect = Math.Max(0.01f, (float)_gl.ClientSize.Width / _gl.ClientSize.Height);
+                var projection = GlMatrix4.CreatePerspectiveFieldOfView(GlMathHelper.DegreesToRadians(42f), aspect, 0.01f, 100f);
+                GL.UniformMatrix4(_modelLocation, false, ref _model);
+                GL.UniformMatrix4(_viewLocation, false, ref view);
+                GL.UniformMatrix4(_projectionLocation, false, ref projection);
+                GL.Uniform1(_textureLocation, 0);
+
+                foreach (var part in _parts)
+                {
+                    GL.BindVertexArray(part.Vao);
+                    bool useTexture = _textureToggle.Checked && part.GlTexture != 0;
+                    GL.Uniform1(_hasTextureLocation, useTexture ? 1 : 0);
+                    GL.Uniform4(_tintLocation, part.Tint.R / 255f, part.Tint.G / 255f, part.Tint.B / 255f, part.Tint.A / 255f);
+                    if (useTexture)
+                    {
+                        GL.ActiveTexture(TextureUnit.Texture0);
+                        GL.BindTexture(TextureTarget.Texture2D, part.GlTexture);
+                    }
+                    GL.PolygonMode(MaterialFace.FrontAndBack, _wireframe.Checked ? PolygonMode.Line : PolygonMode.Fill);
+                    GL.DrawElements(BeginMode.Triangles, part.Indices.Length, DrawElementsType.UnsignedInt, IntPtr.Zero);
+                }
+                GL.PolygonMode(MaterialFace.FrontAndBack, PolygonMode.Fill);
+                GL.BindVertexArray(0);
+                GL.BindTexture(TextureTarget.Texture2D, 0);
+                GL.UseProgram(0);
+                _gl.SwapBuffers();
+            }
+            catch (Exception ex) { _status.Text = "Viewport draw failed: " + ex.Message; }
+        }
+
+        private void Gl_MouseDown(object sender, MouseEventArgs e)
+        {
+            _gl.Focus();
+            _lastX = e.X; _lastY = e.Y;
+            _leftDrag = e.Button == MouseButtons.Left;
+            _panDrag = e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle;
+        }
+
+        private void Gl_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left) _leftDrag = false;
+            if (e.Button == MouseButtons.Right || e.Button == MouseButtons.Middle) _panDrag = false;
+        }
+
+        private void Gl_MouseMove(object sender, MouseEventArgs e)
+        {
+            if (!_leftDrag && !_panDrag) return;
+            var dx = e.X - _lastX; var dy = e.Y - _lastY;
+            _lastX = e.X; _lastY = e.Y;
+            if (_leftDrag)
+            {
+                _yaw += dx * 0.01f;
+                _pitch = Math.Max(-1.52f, Math.Min(1.52f, _pitch + dy * 0.01f));
+            }
+            else
+            {
+                var pan = _distance * 0.0017f;
+                _panX += dx * pan;
+                _panY -= dy * pan;
+            }
+            _gl.Invalidate();
+        }
+
+        private void Gl_MouseWheel(object sender, MouseEventArgs e)
+        {
+            _distance *= e.Delta > 0 ? 0.88f : 1.14f;
+            _distance = Math.Max(0.35f, Math.Min(50f, _distance));
+            _gl.Invalidate();
+        }
+
+        private void ResetView()
+        {
+            _yaw = -0.55f; _pitch = -0.32f; _distance = 3.2f; _panX = _panY = 0;
+            _gl.Invalidate();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            try
+            {
+                if (_glReady && !_gl.IsDisposed)
+                {
+                    _gl.MakeCurrent();
+                    foreach (var part in _parts)
+                    {
+                        if (part.GlTexture != 0) GL.DeleteTexture(part.GlTexture);
+                        if (part.IndexBuffer != 0) GL.DeleteBuffer(part.IndexBuffer);
+                        if (part.UvBuffer != 0) GL.DeleteBuffer(part.UvBuffer);
+                        if (part.NormalBuffer != 0) GL.DeleteBuffer(part.NormalBuffer);
+                        if (part.PositionBuffer != 0) GL.DeleteBuffer(part.PositionBuffer);
+                        if (part.Vao != 0) GL.DeleteVertexArray(part.Vao);
+                    }
+                    if (_program != 0) GL.DeleteProgram(_program);
+                }
+            }
+            catch { }
+            _unusedTimer.Dispose();
+            _glReady = false;
+            base.OnFormClosing(e);
         }
     }
 }
