@@ -113,11 +113,10 @@ jobs:
           Visual Lab:
           1. Open Menu -> MLBB Visual Lab.
           2. Scan a package folder or select multiple Unity bundles.
-          3. Select "Analyze Unity Bundle Contents" to parse serialized Unity objects and inspect PPtr dependencies.
-          4. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
-          5. Select a Mesh or GameObject object and click Preview Selected Model / Mesh (static) to orbit, pan, zoom, and toggle wireframe.
-             GameObject preview combines available child MeshFilter / SkinnedMeshRenderer geometry; skinned meshes are shown without bone deformation.
-          6. Select an AnimationClip and click Inspect Selected AnimationClip to view duration, curve bindings/key counts, and embedded events.
+          3. Visual Lab automatically analyzes selected Unity files after the scan and opens the interactive player if it finds a GameObject hierarchy and AnimationClip.
+          4. In the player choose a model root and AnimationClip, then click Load Model + Clip. Use Play/Pause/Stop, Loop, speed, scrubbing, and mouse orbit/pan/zoom.
+          5. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
+          6. Use Preview Selected Model / Mesh (static) for geometry inspection, or Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
           7. Use Skill Timeline to author and save manual event timings.
 
           Safety:
@@ -127,10 +126,10 @@ jobs:
           - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
           Current limitations:
-          - The 3D viewport draws one Mesh or combines a GameObject subtree as static geometry, but does not render recovered materials, textures, or the original shader pipeline.
-          - Skinned-mesh deformation and rig binding are not connected yet.
-          - AnimationClip inspection reads metadata/curves/events, but does not play the clip or deform the model.
-          - AnimationClip playback, Unity particle/trail runtime, shader reconstruction, and executing the skill timeline are not available in this foundation build.
+          - The player is an initial reconstruction adapter: direct position/scale/rotation channels are interpolated and CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
+          - Humanoid/muscle-only clips requiring Avatar reconstruction, AnimatorController/state machines, and game-specific logic are not yet supported.
+          - Recovered MLBB materials/textures/original shaders are not rendered; Unity particle/trail playback and executable skill timelines remain unimplemented.
+          - Validate real hero packages on Windows; a successful build alone does not prove the selected model/clip binding is correct.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
 
           Existing Juancho Texture2D replacement:
