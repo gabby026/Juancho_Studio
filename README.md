@@ -14,6 +14,7 @@ Current capabilities:
 - Inspect resolved and unresolved PPtr dependencies across the selected package.
 - Inspect AnimationClip duration, sample rate, curve bindings/key counts, embedded events, and playback-readiness diagnostics.
 - Preview one static `Mesh` or combine an indexed `GameObject` hierarchy into an interactive 3D viewport.
+- The **Inspect hero_skin as Prefab** workspace parses the selected `hero_<heroname>_skin.unity3d` as a Unity-style object graph. It builds a GameObject/Transform hierarchy, exposes component nodes, indexed SkinnedMeshRenderer bones, mesh references, material slots, Shader references, and saved texture-property links; it also lists all parsed objects in that bundle by serialized class and Path ID. Selecting a Texture2D decodes and previews the image using AssetStudio's texture decoder. Selecting a GameObject, renderer, mesh or material displays its related material texture slots and thumbnails when references/data can be resolved. It reports the serialized-vs-parsed object count so unsupported types are visible instead of silently implied to be loaded.
 - The interactive player specifically discovers `hero_<heroname>_skin.unity3d` and requires that same bundle to contain a `Mesh`, a `GameObject` hierarchy, and `AnimationClip` objects. It lists model roots and all AnimationClips from that hero-skin bundle only; selecting another clip loads its preview so you can inspect skills individually. Playback supports play/pause/stop, scrubbing, loop, speed, orbit/pan/zoom, and best-effort CPU skinning from recovered weights, bind poses, bone references, and hierarchy transforms. It decodes direct curves plus supported streamed, dense, constant and compressed-rotation channels.
 - Filter discovered objects by likely role: model geometry, animation, visual effects, material/texture, scene hierarchy, audio, or game-specific component. Role labels are classification hints; preview readiness is shown separately.
 - Save a scan report and author/save/reopen manually timed skill-sequence projects.
@@ -21,8 +22,8 @@ Current capabilities:
 
 ## What is not implemented yet
 
-This is a foundation build, **not yet the complete live simulator**. Interactive playback is an initial reconstruction adapter, not a replacement for Unity's full Animator. It does not yet:
-- render recovered materials, textures, UV animation, or the original MLBB shader pipeline;
+This is a foundation build, **not yet the complete live simulator**. Interactive playback is an initial reconstruction adapter, not a replacement for Unity's full Animator. The new prefab inspector shows material texture-slot images, but the 3D preview does not yet reproduce Unity's full material/shader renderer. It does not yet:
+- render material textures on reconstructed mesh surfaces with full Unity shader, UV-transform, normal-map, transparency, and blend-mode parity;
 - guarantee correct skinned-mesh binding when bone references or dependencies are missing/mismatched; the first CPU skinning adapter is still unvalidated against a real MLBB package;
 - reproduce Unity's exact curve tangents/interpolation, AnimatorControllers, or Humanoid/muscle-only clips requiring Avatar reconstruction;
 - simulate Unity ParticleSystem / TrailRenderer effects;
