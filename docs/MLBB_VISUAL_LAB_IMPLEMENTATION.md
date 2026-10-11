@@ -163,12 +163,13 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [ ] Save/reopen sequence with stable references.
 - [ ] Regression-test event ordering and time offsets.
 
-### M7 — Windows release
-- [ ] Clean x64 build.
-- [ ] Automated smoke tests in CI.
-- [ ] Manual test on a clean Windows machine.
-- [ ] No source mutation; diagnostics and sample sequence verified.
-- [ ] Document supported/unsupported asset classes.
+### M7 — Foundation build and release gate
+- [x] Windows x64 foundation build and ZIP packaging succeeded in GitHub Actions.
+- [x] Automated smoke tests in CI passed for package scanning, SHA-256 inventory, source-preservation checks, export path protection, sequence save/reload, and timeline validation.
+- [ ] Manually launch the packaged app on a clean Windows machine.
+- [ ] Import and analyze the complete local Nana fixture in the GUI, then verify a selected Mesh in the static viewport.
+- [ ] Record source hashes before and after the GUI-level test to confirm the files remain unchanged.
+- [x] Document supported/unsupported asset classes and current playback limitations.
 
 ## Local Nana fixture details
 
