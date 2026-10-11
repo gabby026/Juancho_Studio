@@ -476,7 +476,7 @@ namespace Juancho.VisualLab
                     var quaternions = c.m_Values?.UnpackQuats() ?? Array.Empty<AssetStudio.Quaternion>();
                     int count = Math.Min(times.Length, quaternions.Length);
                     if (count == 0) continue;
-                    double maxPacked = Math.Pow(2, Math.Max(1, c.m_Times.m_BitSize)) - 1;
+                    double maxPacked = Math.Pow(2, Math.Max(1, (int)c.m_Times.m_BitSize)) - 1;
                     var keys = new PlaybackQuaternionKey[count];
                     for (int i = 0; i < count; i++)
                         keys[i] = new PlaybackQuaternionKey
@@ -697,7 +697,7 @@ namespace AssetStudioGUI
             StartPosition = FormStartPosition.CenterParent;
             Size = new Size(1420, 940);
             MinimumSize = new Size(1000, 680);
-            Font = new Font("Segoe UI", 9F);
+            Font = new System.Drawing.Font("Segoe UI", 9F);
 
             var root = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Padding = new Padding(8) };
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -732,7 +732,7 @@ namespace AssetStudioGUI
             top.Controls.Add(_loadButton);
 
             var viewportHost = new Panel { Dock = DockStyle.Fill };
-            _gl.Dock = DockStyle.Fill; _gl.BackColor = Color.FromArgb(20, 23, 30);
+            _gl.Dock = DockStyle.Fill; _gl.BackColor = System.Drawing.Color.FromArgb(20, 23, 30);
             _gl.Load += Gl_Load; _gl.Paint += Gl_Paint; _gl.Resize += (s, e) => _gl.Invalidate();
             _gl.MouseDown += Gl_MouseDown; _gl.MouseUp += (s, e) => { _rotating = false; _panning = false; };
             _gl.MouseMove += Gl_MouseMove; _gl.MouseWheel += Gl_MouseWheel; _gl.DoubleClick += (s, e) => ResetView();
