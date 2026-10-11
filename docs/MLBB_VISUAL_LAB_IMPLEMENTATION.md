@@ -137,11 +137,13 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [x] Dependency inspector is backed by parsed object references rather than folder-name heuristics.
 - [ ] Run against the Nana package and verify realistic cross-bundle resolution, duplicate names, and missing-reference diagnostics.
 
-### M3 — First real 3D proof of concept
-- [ ] Render one real MLBB character model.
+### M3 — Static geometry preview and first real 3D proof of concept
+- [x] Add an interactive OpenGL viewport for indexed standalone Mesh objects, with orbit, pan, zoom, reset, and wireframe controls.
+- [x] Extract standalone Mesh vertex/index data from isolated source copies without writing to original bundles.
+- [ ] Validate the static viewport against one Mesh in the real Nana fixture.
+- [ ] Assemble a full GameObject hierarchy with MeshRenderer / SkinnedMeshRenderer.
 - [ ] Assign the correct recovered texture and material.
-- [ ] Add orbit, pan, zoom and reset.
-- [ ] Verify scene transforms and coordinate handedness.
+- [ ] Verify rig transforms and coordinate handedness.
 
 ### M4 — AnimationClip runtime
 - [ ] Recover clip duration and animation curves.
