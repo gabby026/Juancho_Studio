@@ -35,6 +35,7 @@ namespace AssetStudioGUI
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private string _selectedAssetPath = "";
+        private readonly List<string> _protectedSourceRoots = new List<string>();
 
         public JuanchoVisualLabForm()
         {
@@ -323,6 +324,7 @@ namespace AssetStudioGUI
             {
                 var result = await VisualLabPackageScanner.ScanAsync(paths, progress, _scanCancellation.Token);
                 _lastScan = result;
+                RememberProtectedRoots(result.ProtectedSourceRoots);
                 foreach (var asset in result.Assets) _assetItems.Add(asset);
                 _exportReportButton.Enabled = result.Assets.Count > 0 || result.Diagnostics.Count > 0;
                 _scanStatus.Text = string.Format(
@@ -380,7 +382,7 @@ namespace AssetStudioGUI
                 var sequence = new VisualLabSequence
                 {
                     Title = string.IsNullOrWhiteSpace(_sequenceTitle.Text) ? "Untitled skill sequence" : _sequenceTitle.Text.Trim(),
-                    ProtectedSourceRoots = _lastScan?.ProtectedSourceRoots ?? new List<string>(),
+                    ProtectedSourceRoots = _protectedSourceRoots.ToList(),
                     Events = _timelineItems.ToList()
                 };
                 using (var dialog = new SaveFileDialog())
@@ -410,6 +412,7 @@ namespace AssetStudioGUI
                 try
                 {
                     var sequence = await VisualLabProjectStore.LoadSequenceAsync(dialog.FileName);
+                    RememberProtectedRoots(sequence.ProtectedSourceRoots);
                     _timelineItems.Clear();
                     foreach (var item in sequence.Events) _timelineItems.Add(item);
                     _sequenceTitle.Text = sequence.Title;
@@ -419,6 +422,18 @@ namespace AssetStudioGUI
                 {
                     MessageBox.Show(this, "Sequence could not be opened:\r\n\r\n" + ex.Message, "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+            }
+        }
+
+        private void RememberProtectedRoots(IEnumerable<string> roots)
+        {
+            if (roots == null) return;
+            foreach (var root in roots)
+            {
+                if (string.IsNullOrWhiteSpace(root)) continue;
+                var full = Path.GetFullPath(root);
+                if (!_protectedSourceRoots.Any(existing => string.Equals(Path.GetFullPath(existing), full, StringComparison.OrdinalIgnoreCase)))
+                    _protectedSourceRoots.Add(full);
             }
         }
 
