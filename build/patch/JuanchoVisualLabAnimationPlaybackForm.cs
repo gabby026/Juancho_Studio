@@ -1048,13 +1048,17 @@ namespace Juancho.VisualLab
             }
 
             foreach (var pair in positionsByPath)
-                Track(pair.Key).Positions = pair.Value.OrderBy(k => k.Time).ToArray();
+                Track(pair.Key).Positions = pair.Value.OrderBy(k => k.Time)
+                    .GroupBy(k => Math.Round(k.Time, 6)).Select(group => group.First()).ToArray();
             foreach (var pair in scalesByPath)
-                Track(pair.Key).Scales = pair.Value.OrderBy(k => k.Time).ToArray();
+                Track(pair.Key).Scales = pair.Value.OrderBy(k => k.Time)
+                    .GroupBy(k => Math.Round(k.Time, 6)).Select(group => group.First()).ToArray();
             foreach (var pair in eulersByPath)
-                Track(pair.Key).EulerRotations = pair.Value.OrderBy(k => k.Time).ToArray();
+                Track(pair.Key).EulerRotations = pair.Value.OrderBy(k => k.Time)
+                    .GroupBy(k => Math.Round(k.Time, 6)).Select(group => group.First()).ToArray();
             foreach (var pair in rotationsByPath)
-                Track(pair.Key).Rotations = pair.Value.OrderBy(k => k.Time).ToArray();
+                Track(pair.Key).Rotations = pair.Value.OrderBy(k => k.Time)
+                    .GroupBy(k => Math.Round(k.Time, 6)).Select(group => group.First()).ToArray();
 
             var nodePaths = new HashSet<string>(scene.Nodes.Select(node => node.Path), StringComparer.Ordinal);
             foreach (var track in byPath.Values)
@@ -1065,6 +1069,49 @@ namespace Juancho.VisualLab
 
         private static string AppendNote(string current, string next) =>
             string.IsNullOrWhiteSpace(current) ? next : current + " " + next;
+
+        private static int BindingWidth(AssetStudio.GenericBinding binding)
+        {
+            if (binding == null || binding.typeID != AssetStudio.ClassIDType.Transform)
+                return 1;
+            switch ((int)binding.attribute)
+            {
+                case 1: // Transform position x/y/z
+                case 3: // Transform scale x/y/z
+                case 4: // Transform Euler x/y/z
+                    return 3;
+                case 2: // Transform quaternion x/y/z/w
+                    return 4;
+                default:
+                    return 1;
+            }
+        }
+
+        private static float SampleScalar(
+            Dictionary<int, List<PlaybackScalarKey>> curves, int curveIndex, float time, float fallback)
+        {
+            if (curves == null || !curves.TryGetValue(curveIndex, out var keys) || keys == null || keys.Count == 0)
+                return fallback;
+            if (time <= keys[0].Time) return keys[0].Value;
+            if (time >= keys[keys.Count - 1].Time) return keys[keys.Count - 1].Value;
+
+            int next = keys.FindIndex(key => key.Time >= time);
+            if (next <= 0) return keys[0].Value;
+            var a = keys[next - 1];
+            var b = keys[next];
+            float span = Math.Max(0.000001f, b.Time - a.Time);
+            float u = Math.Max(0, Math.Min(1, (time - a.Time) / span));
+            if (a.HasTangents && b.HasTangents && IsFinite(a.OutSlope) && IsFinite(b.InSlope))
+            {
+                float u2 = u * u;
+                float u3 = u2 * u;
+                return (2f * u3 - 3f * u2 + 1f) * a.Value +
+                    (u3 - 2f * u2 + u) * span * a.OutSlope +
+                    (-2f * u3 + 3f * u2) * b.Value +
+                    (u3 - u2) * span * b.InSlope;
+            }
+            return a.Value + (b.Value - a.Value) * u;
+        }
 
         private static Dictionary<uint, string> BuildPathHashMap(
             VisualLabPlaybackScene scene, List<AssetStudio.Transform> transforms)
