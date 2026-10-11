@@ -52,6 +52,9 @@ namespace Juancho.VisualLab
         public string Platform { get; set; } = "";
         public int VertexCount { get; set; }
         public int TriangleCount { get; set; }
+        public int MeshPartCount { get; set; }
+        public int SkinnedMeshPartCount { get; set; }
+        public string PreviewNotes { get; set; } = "";
         public float[] Positions { get; set; } = Array.Empty<float>();
         public float[] Normals { get; set; } = Array.Empty<float>();
         public uint[] Indices { get; set; } = Array.Empty<uint>();
@@ -392,6 +395,226 @@ namespace Juancho.VisualLab
                 try { manager.Clear(); } catch { }
                 try { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); } catch { }
             }
+        }
+
+        public static Task<VisualLabMeshPreviewData> ExtractGameObjectPreviewAsync(
+            IEnumerable<string> paths,
+            VisualLabUnityAssetItem selectedAsset)
+        {
+            if (selectedAsset == null) throw new ArgumentNullException(nameof(selectedAsset));
+            if (!string.Equals(selectedAsset.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("Select a serialized GameObject to preview its static child geometry.", nameof(selectedAsset));
+
+            var files = (paths ?? Enumerable.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x) && File.Exists(x))
+                .Select(Path.GetFullPath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (files.Length == 0)
+                throw new ArgumentException("No source bundle files are available for model preview.", nameof(paths));
+
+            return Task.Run(() => ExtractGameObjectPreview(files, selectedAsset));
+        }
+
+        private static VisualLabMeshPreviewData ExtractGameObjectPreview(string[] files, VisualLabUnityAssetItem selectedAsset)
+        {
+            var manager = new AssetsManager();
+            var workspace = Path.Combine(Path.GetTempPath(), "JuanchoMLBBVisualLab", Guid.NewGuid().ToString("N"));
+            var workspaceToOriginalPath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            try
+            {
+                Directory.CreateDirectory(workspace);
+                var isolatedFiles = CopyInputsToWorkspace(files, workspace, workspaceToOriginalPath);
+                MergeSplitPartsInWorkspace(workspace);
+                manager.LoadFiles(isolatedFiles);
+
+                var intendedPath = Path.GetFullPath(selectedAsset.SourceBundlePath ?? "");
+                AssetStudio.GameObject rootObject = null;
+                foreach (var serializedFile in manager.assetsFileList)
+                {
+                    var originalPath = ResolveOriginalSourcePath(serializedFile, workspaceToOriginalPath, files, workspace);
+                    if (string.IsNullOrWhiteSpace(originalPath) ||
+                        !string.Equals(Path.GetFullPath(originalPath), intendedPath, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    foreach (var obj in serializedFile.Objects ?? new List<UnityObject>())
+                    {
+                        if (obj is AssetStudio.GameObject gameObject && gameObject.m_PathID == selectedAsset.PathId)
+                        {
+                            rootObject = gameObject;
+                            break;
+                        }
+                    }
+                    if (rootObject != null) break;
+                }
+
+                if (rootObject == null)
+                    throw new InvalidDataException("The selected GameObject could not be reloaded from its source bundle and Path ID. Re-scan the package and select the object again.");
+
+                var rootTransform = FindGameObjectTransform(rootObject);
+                if (rootTransform == null)
+                    throw new InvalidDataException("The selected GameObject has no resolvable Transform component.");
+
+                var allPositions = new List<float>();
+                var allNormals = new List<float>();
+                var allIndices = new List<uint>();
+                var includedMeshes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var visitedTransforms = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                var meshPartCount = 0;
+                var skinnedPartCount = 0;
+                var maxVertices = 1500000;
+
+                var stack = new Stack<AssetStudio.Transform>();
+                stack.Push(rootTransform);
+                while (stack.Count > 0)
+                {
+                    var transform = stack.Pop();
+                    if (transform == null) continue;
+                    var transformKey = GetFileIdentity(transform.assetsFile) + "|" + transform.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                    if (!visitedTransforms.Add(transformKey)) continue;
+                    if (visitedTransforms.Count > 100000)
+                        throw new InvalidDataException("The selected hierarchy exceeded 100,000 transforms; preview was stopped to protect memory.");
+
+                    if (transform.m_GameObject != null && transform.m_GameObject.TryGet(out AssetStudio.GameObject gameObject))
+                    {
+                        foreach (var componentPointer in gameObject.m_Components ?? Array.Empty<PPtr<AssetStudio.Component>>())
+                        {
+                            if (componentPointer == null || !componentPointer.TryGet(out AssetStudio.Component component) || component == null)
+                                continue;
+
+                            AssetStudio.Mesh mesh = null;
+                            var isSkinned = false;
+                            if (component is AssetStudio.MeshFilter meshFilter)
+                            {
+                                if (meshFilter.m_Mesh != null) meshFilter.m_Mesh.TryGet(out mesh);
+                            }
+                            else if (component is AssetStudio.SkinnedMeshRenderer skinnedRenderer)
+                            {
+                                if (skinnedRenderer.m_Mesh != null) skinnedRenderer.m_Mesh.TryGet(out mesh);
+                                isSkinned = true;
+                            }
+
+                            if (mesh == null) continue;
+                            var meshKey = transformKey + "|" + component.type.ToString() + "|" +
+                                GetFileIdentity(mesh.assetsFile) + "|" + mesh.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                            if (!includedMeshes.Add(meshKey)) continue;
+
+                            var meshSourcePath = ResolveOriginalSourcePath(mesh.assetsFile, workspaceToOriginalPath, files, workspace);
+                            var meshItem = new VisualLabUnityAssetItem
+                            {
+                                Key = MakeAssetKey(GetFileIdentity(mesh.assetsFile), mesh.m_PathID),
+                                Name = string.IsNullOrWhiteSpace(mesh.m_Name) ? GetObjectName(mesh) : mesh.m_Name,
+                                ClassName = "Mesh",
+                                PathId = mesh.m_PathID,
+                                SourceBundlePath = meshSourcePath
+                            };
+                            var part = BuildMeshPreviewData(mesh, meshItem, meshSourcePath, mesh.version == null ? "" : string.Join(".", mesh.version), mesh.platform.ToString());
+                            if (allPositions.Count / 3L + part.VertexCount > maxVertices)
+                                throw new InvalidDataException("The selected hierarchy contains more than 1,500,000 vertices. Select a smaller sub-object to preview.");
+
+                            var worldMatrix = CalculateWorldMatrix(transform);
+                            var normalMatrix = worldMatrix;
+                            if (System.Numerics.Matrix4x4.Invert(worldMatrix, out var inverseWorld))
+                                normalMatrix = System.Numerics.Matrix4x4.Transpose(inverseWorld);
+
+                            var vertexOffset = (uint)(allPositions.Count / 3);
+                            for (var i = 0; i < part.VertexCount; i++)
+                            {
+                                var p = new System.Numerics.Vector3(part.Positions[i * 3], part.Positions[i * 3 + 1], part.Positions[i * 3 + 2]);
+                                p = System.Numerics.Vector3.Transform(p, worldMatrix);
+                                allPositions.Add(p.X); allPositions.Add(p.Y); allPositions.Add(p.Z);
+
+                                var n = new System.Numerics.Vector3(part.Normals[i * 3], part.Normals[i * 3 + 1], part.Normals[i * 3 + 2]);
+                                n = System.Numerics.Vector3.TransformNormal(n, normalMatrix);
+                                if (n.LengthSquared() > 1e-10f) n = System.Numerics.Vector3.Normalize(n);
+                                else n = System.Numerics.Vector3.UnitY;
+                                allNormals.Add(n.X); allNormals.Add(n.Y); allNormals.Add(n.Z);
+                            }
+
+                            foreach (var index in part.Indices)
+                                allIndices.Add(vertexOffset + index);
+
+                            meshPartCount++;
+                            if (isSkinned) skinnedPartCount++;
+                        }
+                    }
+
+                    var children = transform.m_Children ?? Array.Empty<PPtr<AssetStudio.Transform>>();
+                    for (var i = children.Length - 1; i >= 0; i--)
+                    {
+                        if (children[i] != null && children[i].TryGet(out AssetStudio.Transform child) && child != null)
+                            stack.Push(child);
+                    }
+                }
+
+                if (meshPartCount == 0 || allIndices.Count < 3)
+                    throw new InvalidDataException("No drawable MeshFilter or SkinnedMeshRenderer mesh was found in this GameObject hierarchy. Try selecting a child GameObject or Mesh directly.");
+
+                return new VisualLabMeshPreviewData
+                {
+                    Name = string.IsNullOrWhiteSpace(rootObject.m_Name) ? selectedAsset.Name : rootObject.m_Name,
+                    SourceBundlePath = selectedAsset.SourceBundlePath,
+                    PathId = rootObject.m_PathID,
+                    UnityVersion = rootObject.assetsFile?.unityVersion ?? "",
+                    Platform = rootObject.assetsFile?.m_TargetPlatform.ToString() ?? "",
+                    VertexCount = allPositions.Count / 3,
+                    TriangleCount = allIndices.Count / 3,
+                    MeshPartCount = meshPartCount,
+                    SkinnedMeshPartCount = skinnedPartCount,
+                    PreviewNotes = skinnedPartCount > 0
+                        ? "Hierarchy meshes included; skinned meshes are shown in bind/base pose without bone deformation. Materials/textures are not rendered."
+                        : "Hierarchy meshes combined as static geometry. Materials/textures are not rendered.",
+                    Positions = allPositions.ToArray(),
+                    Normals = allNormals.ToArray(),
+                    Indices = allIndices.ToArray()
+                };
+            }
+            catch (Exception ex) when (!(ex is InvalidDataException))
+            {
+                throw new InvalidDataException("Could not assemble static GameObject geometry from isolated bundle copies. Original source files were not modified. Details: " + ex.Message, ex);
+            }
+            finally
+            {
+                try { manager.Clear(); } catch { }
+                try { if (Directory.Exists(workspace)) Directory.Delete(workspace, true); } catch { }
+            }
+        }
+
+        private static AssetStudio.Transform FindGameObjectTransform(AssetStudio.GameObject gameObject)
+        {
+            if (gameObject == null) return null;
+            foreach (var pointer in gameObject.m_Components ?? Array.Empty<PPtr<AssetStudio.Component>>())
+            {
+                if (pointer != null && pointer.TryGet(out AssetStudio.Component component) && component is AssetStudio.Transform transform)
+                    return transform;
+            }
+            return null;
+        }
+
+        private static System.Numerics.Matrix4x4 CalculateWorldMatrix(AssetStudio.Transform transform)
+        {
+            var world = System.Numerics.Matrix4x4.Identity;
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var current = transform;
+            var depth = 0;
+            while (current != null && depth++ < 256)
+            {
+                var identity = GetFileIdentity(current.assetsFile) + "|" + current.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                if (!seen.Add(identity)) break;
+
+                var p = current.m_LocalPosition;
+                var s = current.m_LocalScale;
+                var q = current.m_LocalRotation;
+                var local = System.Numerics.Matrix4x4.CreateScale(s.X, s.Y, s.Z) *
+                    System.Numerics.Matrix4x4.CreateFromQuaternion(new System.Numerics.Quaternion(q.X, q.Y, q.Z, q.W)) *
+                    System.Numerics.Matrix4x4.CreateTranslation(p.X, p.Y, p.Z);
+                world = world * local;
+
+                if (current.m_Father == null || !current.m_Father.TryGet(out AssetStudio.Transform parent))
+                    break;
+                current = parent;
+            }
+            return world;
         }
 
         private static VisualLabMeshPreviewData BuildMeshPreviewData(
