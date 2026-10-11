@@ -756,62 +756,26 @@ namespace Juancho.VisualLab
             }
 
             var pathHashMap = BuildPathHashMap(scene, transforms);
-            void ConsumeSerializedCurve(AssetStudio.GenericBinding binding, float time, float[] values, int baseOffset, ref int cursor)
-            {
-                if (binding == null || binding.typeID != AssetStudio.ClassIDType.Transform)
-                {
-                    cursor++;
-                    return;
-                }
-
-                string path = pathHashMap.TryGetValue(binding.path, out var bindingPath)
-                    ? bindingPath
-                    : "#unresolved_" + binding.path.ToString("X8", System.Globalization.CultureInfo.InvariantCulture);
-                int attribute = (int)binding.attribute;
-
-                if (attribute == 1 || attribute == 3 || attribute == 4)
-                {
-                    if (baseOffset + cursor + 2 >= values.Length) { cursor++; return; }
-                    var value = new NVector3(values[baseOffset + cursor], values[baseOffset + cursor + 1], values[baseOffset + cursor + 2]);
-                    cursor += 3;
-                    if (attribute == 1) AddVectorKey(positionsByPath, path, "position", time, value);
-                    else if (attribute == 3) AddVectorKey(scalesByPath, path, "scale", time, value);
-                    else AddVectorKey(eulersByPath, path, "euler", time, value);
-                }
-                else if (attribute == 2)
-                {
-                    if (baseOffset + cursor + 3 >= values.Length) { cursor++; return; }
-                    var value = new NQuaternion(values[baseOffset + cursor], values[baseOffset + cursor + 1],
-                        values[baseOffset + cursor + 2], values[baseOffset + cursor + 3]);
-                    cursor += 4;
-                    AddRotationKey(path, time, value);
-                }
-                else
-                {
-                    cursor++;
-                }
-            }
-
             foreach (var curve in clip.m_PositionCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
                 foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
                     if (key != null) AddVectorKey(positionsByPath, curve.path, "position", key.time,
                         new NVector3(key.value.X, key.value.Y, key.value.Z),
                         new NVector3(key.inSlope.X, key.inSlope.Y, key.inSlope.Z),
-                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), true);
+                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), key.weightedMode == 0);
 
             foreach (var curve in clip.m_ScaleCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
                 foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
                     if (key != null) AddVectorKey(scalesByPath, curve.path, "scale", key.time,
                         new NVector3(key.value.X, key.value.Y, key.value.Z),
                         new NVector3(key.inSlope.X, key.inSlope.Y, key.inSlope.Z),
-                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), true);
+                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), key.weightedMode == 0);
 
             foreach (var curve in clip.m_EulerCurves ?? Array.Empty<AssetStudio.Vector3Curve>())
                 foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Vector3>>())
                     if (key != null) AddVectorKey(eulersByPath, curve.path, "euler", key.time,
                         new NVector3(key.value.X, key.value.Y, key.value.Z),
                         new NVector3(key.inSlope.X, key.inSlope.Y, key.inSlope.Z),
-                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), true);
+                        new NVector3(key.outSlope.X, key.outSlope.Y, key.outSlope.Z), key.weightedMode == 0);
 
             foreach (var curve in clip.m_RotationCurves ?? Array.Empty<AssetStudio.QuaternionCurve>())
                 foreach (var key in curve.curve?.m_Curve ?? Array.Empty<AssetStudio.Keyframe<AssetStudio.Quaternion>>())
