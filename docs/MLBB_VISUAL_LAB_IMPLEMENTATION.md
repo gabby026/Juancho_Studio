@@ -101,7 +101,7 @@ Implement in slices:
 - **Skill Timeline:** multiple tracks, start/duration, source asset, enabled state, playhead and sequence playback.
 - **Diagnostics:** missing pointers, unsupported serialized classes, missing textures/materials, rig-binding failures, and runtime compatibility notes.
 
-The current UI exposes Package Explorer, Serialized Objects, Skill Timeline, Runtime Status, and an **Interactive Model + Animation Player**. The player reconstructs a selected GameObject hierarchy, reads one selected AnimationClip, evaluates directly keyed transform channels, deforms supported skinned mesh parts using recovered bone weights/bind poses, and offers play/pause/stop/scrub/loop/speed controls. It deliberately labels clips without supported direct transform channels as unsupported instead of presenting a fake animation.
+The interactive player specifically searches for `hero_<heroname>_skin.unity3d`. It requires that same bundle to expose `Mesh`, `GameObject`, and `AnimationClip` objects, then filters the model-root and AnimationClip lists to that bundle only. Changing the selected clip reloads the preview for that clip. The first playback adapter decodes direct curves and supported streamed/dense/constant/compressed-rotation channels, resolves transform binding hashes where possible, and attempts CPU skinning from available weights, bind poses, and bone references. It does not yet reproduce Unity's complete Animator or render the original MLBB materials/shaders.
 
 ## Safety and source-preservation rules
 
@@ -152,6 +152,8 @@ The current UI exposes Package Explorer, Serialized Objects, Skill Timeline, Run
 - [x] Implement an initial playback adapter for direct position/scale/quaternion/Euler curves and supported compressed quaternion keys.
 - [x] Bind discovered hierarchy nodes and attempt CPU skinning when vertex weights, bind poses, and renderer bone references are present.
 - [x] Add play/pause/stop/loop/scrub/speed controls and an orbit/pan/zoom viewport.
+- [x] Restrict playable model roots and AnimationClips to the exact `hero_<heroname>_skin.unity3d` source bundle; allow clip selection to reload the preview.
+- [ ] Verify clip-list completeness and correct model/clip binding in a real Nana package on Windows.
 - [ ] Validate bone mapping, matrix conventions, model proportions, and one real clip against the Nana fixture on Windows.
 - [ ] Support Humanoid/muscle-only clips with Avatar reconstruction, AnimatorController/state transitions, and Unity-equivalent interpolation/root motion.
 
