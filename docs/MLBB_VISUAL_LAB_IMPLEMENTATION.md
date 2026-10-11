@@ -15,8 +15,6 @@ Extend the existing Juancho Studio / AssetStudio build overlay into a Windows de
 
 ## Architecture decision
 
-## Architecture decision
-
 Keep the AssetStudio code-reading layer as the authoritative source of serialized asset data. Treat Visual Lab as a separate analysis and preview workspace connected through an adapter, rather than mutating or replacing the existing texture editing code.
 
 ### Layer A — Source inventory and safety
@@ -63,6 +61,8 @@ Every reconstructed feature has a support state: Exact-from-data, Approximate, M
 Do a proof-of-concept comparison before choosing the final implementation:
 - Reuse any compatible model / animation preview functionality available in current AssetStudio.
 - Evaluate a separate Unity runtime for skeletal animation and Unity particle systems.
+- Treat Android-targeted `.unity3d` bundles as serialized-data input, not Windows Player runtime files. Unity documents AssetBundles as platform-specific; the Editor may load them during development, but individual assets can still fail due to platform-specific shaders/textures. Reconstruct supported data into a separate desktop preview workspace rather than relying only on `AssetBundle.LoadFromFile` in a Windows player.
+- The current Nana 10th Anniversary fixture headers identify Unity `2019.4.33f1`, matching the reference project's stated editor version. Use this as a fixture-specific hypothesis; inspect each package header instead of hard-coding one engine version globally.
 - Export or bridge only the data needed for preview, with a manifest that retains source-file/path-ID provenance.
 - Verify the target Unity serialization version per package before selecting a runtime version; do not assume that all MLBB bundles use the same version.
 - Keep runtime output in a disposable workspace. The original bundle stays read-only.
@@ -120,7 +120,8 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [x] Confirm repo architecture and build workflow.
 - [x] Add a testable inventory / timeline core.
 - [x] Add source-protection tests; the GitHub Actions smoke-test step passed on the foundation commit.
-- [ ] Complete the latest Windows CI build after serialized-object UI/indexer integration.
+- [x] Windows x64 CI build completed successfully after serialized-object UI/indexer integration.
+- [ ] Validate indexing against the local Nana fixture in the Windows package; CI does not have access to the user's private asset package.
 
 ### M1 — Package inventory
 - [x] Folder scan and multi-file scan.
@@ -183,3 +184,11 @@ For each test run record:
 - before/after source hashes.
 
 If a requested package has no standalone AnimationClip or particle data, report that clearly and use a different representative sample rather than claiming the feature works.
+
+
+## External technical references
+
+- [SkinForgeID README — community Unity workspace scope](https://github.com/SkinForgeID/MLBB-MODDING-BASE/blob/main/README.md)
+- [Juancho reference review and non-copying boundary](REFERENCE_PROJECT_REVIEW.md)
+- [Unity AssetBundle platform considerations](https://docs.unity.com/en-us/engine/7000.0/manual/assets-and-media/assets-managing-runtime/assetbundles-section/platforms)
+- [Unity AssetBundles introduction and platform version notes](https://docs.unity.cn/2023.1/Documentation/Manual/AssetBundlesIntro.html)
