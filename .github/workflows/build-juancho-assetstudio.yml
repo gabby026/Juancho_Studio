@@ -106,20 +106,34 @@ jobs:
         shell: pwsh
         run: |
           $readme = @'
-          Juancho AssetStudio
-          
+          Juancho Studio — AssetStudio + MLBB Visual Lab foundation
+
           Open AssetStudioGUI.exe.
+
+          Visual Lab:
+          1. Open Menu -> MLBB Visual Lab.
+          2. Scan a package folder or select multiple Unity bundles.
+          3. Select "Analyze Unity Bundle Contents" to parse serialized Unity objects and inspect PPtr dependencies.
+          4. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
+          5. Use Skill Timeline to author and save manual event timings.
+
+          Safety:
+          - Visual Lab parses isolated temporary copies of selected Unity input files.
+          - Source package files are not written by the Visual Lab inventory or object-analysis functions.
+          - Save scan reports and timeline projects outside the imported source folders.
+          - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
-          Usage:
-          1. Load your Unity .unity3d / assets file.
+          Current limitations:
+          - Live 3D scene reconstruction is not connected yet.
+          - AnimationClip playback, Unity particle/trail runtime, shader reconstruction, and executing the skill timeline are not available in this foundation build.
+          - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
+
+          Existing Juancho Texture2D replacement:
+          1. Load your Unity .unity3d / assets file in the main AssetStudio window.
           2. Select exactly one Texture2D.
           3. Open Juancho -> Replace selected texture.
-          4. Select PNG/JPG/BMP/TGA.
-          5. Confirm the Texture2D settings.
-          6. Save the modified Unity file.
-          
-          Save writes back into the currently opened Unity file. A .bak backup of the pre-save file is kept beside it.
-          The package includes the native texture encoder and classdata.tpk for files that use external TypeTrees.
+          4. Select the replacement image and confirm Texture2D settings.
+          5. Save. This explicit texture-edit operation writes to the opened Unity file and keeps a .bak backup.
           '@
           Set-Content "$env:GITHUB_WORKSPACE\publish\README-Juancho.txt" $readme -Encoding UTF8
           Compress-Archive -Path "$env:GITHUB_WORKSPACE\publish\*" -DestinationPath "$env:GITHUB_WORKSPACE\Juancho-AssetStudio-Windows-x64.zip" -Force
