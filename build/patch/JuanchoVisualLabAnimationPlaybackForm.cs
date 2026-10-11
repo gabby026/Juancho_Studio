@@ -574,16 +574,51 @@ namespace Juancho.VisualLab
 
         private static string[] CopyToWorkspace(string[] sourceFiles, string workspace, Dictionary<string, string> map)
         {
+            // Preserve relative folder layout so Unity cross-file dependencies and .split0 companions
+            // remain distinguishable while AssetStudio parses disposable copies.
+            var commonRoot = GetCommonDirectory(sourceFiles);
             var copied = new List<string>();
             for (int i = 0; i < sourceFiles.Length; i++)
             {
                 var source = Path.GetFullPath(sourceFiles[i]);
-                string destination = Path.Combine(workspace, i.ToString("D5", System.Globalization.CultureInfo.InvariantCulture) + "_" + Path.GetFileName(source));
+                var relative = Path.GetRelativePath(commonRoot, source);
+                if (Path.IsPathRooted(relative) || relative == ".." ||
+                    relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                    relative.StartsWith(".." + Path.AltDirectorySeparatorChar, StringComparison.Ordinal))
+                    relative = Path.Combine("_external_inputs", i.ToString("D5", System.Globalization.CultureInfo.InvariantCulture), Path.GetFileName(source));
+
+                var destination = Path.GetFullPath(Path.Combine(workspace, relative));
+                var fullWorkspace = Path.GetFullPath(workspace);
+                if (!string.Equals(destination, fullWorkspace, StringComparison.OrdinalIgnoreCase) &&
+                    !destination.StartsWith(fullWorkspace.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("A selected input resolved outside the temporary parse workspace.");
+
+                var directory = Path.GetDirectoryName(destination);
+                if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
                 File.Copy(source, destination, true);
                 map[destination] = source;
                 copied.Add(destination);
             }
             return copied.ToArray();
+        }
+
+        private static string GetCommonDirectory(string[] files)
+        {
+            if (files == null || files.Length == 0) return Path.GetTempPath();
+            var common = Path.GetDirectoryName(Path.GetFullPath(files[0]));
+            if (string.IsNullOrWhiteSpace(common)) common = Path.GetPathRoot(Path.GetFullPath(files[0]));
+            foreach (var file in files.Skip(1))
+            {
+                var directory = Path.GetDirectoryName(Path.GetFullPath(file));
+                while (!string.IsNullOrWhiteSpace(common) &&
+                    !VisualLabPackageScanner.IsWithinDirectory(directory, common))
+                {
+                    var parent = Directory.GetParent(common);
+                    if (parent == null) { common = Path.GetPathRoot(common); break; }
+                    common = parent.FullName;
+                }
+            }
+            return string.IsNullOrWhiteSpace(common) ? Path.GetPathRoot(Path.GetFullPath(files[0])) : common;
         }
 
         private static void MergeSplitParts(string workspace)
