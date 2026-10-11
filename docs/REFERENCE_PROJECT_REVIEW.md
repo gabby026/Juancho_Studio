@@ -20,6 +20,19 @@ It is useful as a reference for building a Unity runtime scene and organizing ch
 
 These are behavioral observations and engineering requirements. Juancho should implement its own models, UI, diagnostics, and runtime bridge.
 
+## Compatibility finding: editor version is not platform compatibility
+
+The Nana fixture's raw bundle headers identify Unity **2019.4.33f1**, which matches the Unity version requested by the reference project. That is useful for choosing a reconstruction target, but it does not mean an Android-built bundle can be loaded directly by a Windows standalone player.
+
+Unity's AssetBundle documentation explains that runtime bundles are platform-specific. The Editor can open bundles from other platforms during development, but individual assets may still fail to load or render when they depend on platform-specific formats such as shaders or texture encodings. See the official [AssetBundle platform considerations](https://docs.unity.com/en-us/engine/7000.0/manual/assets-and-media/assets-managing-runtime/assetbundles-section/platforms) and [AssetBundle introduction](https://docs.unity.cn/2023.1/Documentation/Manual/AssetBundlesIntro.html).
+
+This changes the runtime plan:
+- Do not implement the Windows Visual Lab player as only `AssetBundle.LoadFromFile(androidBundle)`.
+- Use AssetStudio to parse the Android-targeted serialized objects, preserve their provenance, and reconstruct supported data into a separate preview workspace.
+- Build the renderer and sequence player for the chosen desktop runtime, with explicit adapters for mesh/skinning, animation curves, particle properties, material/texture assignment, trails, and transforms.
+- Allow a development-only Unity Editor path for compatible experiments, but report platform/shader limitations and do not count an editor-only load as proof of a distributable Windows player.
+- Select Unity 2019.4.33f1 as an initial compatibility hypothesis for the Nana fixture, not a universal hard-coded engine version. Verify each package's header and serialized data.
+
 ## Design choices for Juancho
 
 1. Keep the current Juancho Studio workflow, parser provenance, and Windows packaging. Do not import the reference project's Unity workspace or binaries.
