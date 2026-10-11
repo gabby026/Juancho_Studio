@@ -13,6 +13,8 @@ $animationInspectorSource = Join-Path $workspace 'build\patch\JuanchoVisualLabAn
 $animationInspectorTarget = Join-Path $gui 'JuanchoVisualLabAnimationInspectorForm.cs'
 $indexerSource = Join-Path $workspace 'build\patch\JuanchoVisualLabUnityIndexer.cs'
 $indexerTarget = Join-Path $gui 'JuanchoVisualLabUnityIndexer.cs'
+$playbackSource = Join-Path $workspace 'build\patch\JuanchoVisualLabAnimationPlaybackForm.cs'
+$playbackTarget = Join-Path $gui 'JuanchoVisualLabAnimationPlaybackForm.cs'
 
 if (-not (Test-Path $formPath)) { throw "AssetStudioGUIForm.cs was not found at $formPath" }
 if (-not (Test-Path $coreSource)) { throw "Visual Lab core source was not found at $coreSource" }
@@ -20,12 +22,14 @@ if (-not (Test-Path $formSource)) { throw "Visual Lab form source was not found 
 if (-not (Test-Path $indexerSource)) { throw "Visual Lab Unity indexer source was not found at $indexerSource" }
 if (-not (Test-Path $meshPreviewSource)) { throw "Visual Lab static mesh viewport source was not found at $meshPreviewSource" }
 if (-not (Test-Path $animationInspectorSource)) { throw "Visual Lab AnimationClip inspector source was not found at $animationInspectorSource" }
+if (-not (Test-Path $playbackSource)) { throw "Visual Lab animation playback source was not found at $playbackSource" }
 
 Copy-Item $coreSource $coreTarget -Force
 Copy-Item $formSource $formTarget -Force
 Copy-Item $indexerSource $indexerTarget -Force
 Copy-Item $meshPreviewSource $meshPreviewTarget -Force
 Copy-Item $animationInspectorSource $animationInspectorTarget -Force
+Copy-Item $playbackSource $playbackTarget -Force
 
 $formText = Get-Content $formPath -Raw
 $marker = 'JUANCHO_VISUAL_LAB_MENU_START'
