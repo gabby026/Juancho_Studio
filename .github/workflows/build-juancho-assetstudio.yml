@@ -22,7 +22,7 @@ jobs:
 
       - name: Test Visual Lab core
         shell: pwsh
-        run: dotnet run --project tests\\JuanchoVisualLabCore.SmokeTests.csproj --configuration Release
+        run: dotnet run --project tests/JuanchoVisualLabCore.SmokeTests.csproj --configuration Release
 
       - name: Clone AssetStudio upstream
         shell: pwsh
@@ -34,7 +34,7 @@ jobs:
 
       - name: Apply Juancho MLBB Visual Lab foundation
         shell: pwsh
-        run: '& "$env:GITHUB_WORKSPACE\\build\\patch-visual-lab.ps1"'
+        run: '& "$env:GITHUB_WORKSPACE/build/patch-visual-lab.ps1"'
 
       - name: Restore
         working-directory: AssetStudio
