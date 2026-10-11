@@ -146,10 +146,12 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 - [ ] Assign the correct recovered texture and material.
 - [ ] Verify rig transforms and coordinate handedness.
 
-### M4 — AnimationClip runtime
-- [ ] Recover clip duration and animation curves.
-- [ ] Bind to the correct rig.
-- [ ] Play/pause/stop/loop/scrub/speed.
+### M4 — AnimationClip inspection and runtime
+- [x] Inspect clip duration, sample rate, legacy/compression flags, curve channel names and bindings, key counts, and embedded animation events from serialized data.
+- [x] Expose playback-readiness notes that distinguish direct Transform curves from humanoid/muscle clips requiring rig/Avatar reconstruction.
+- [ ] Implement a playback adapter for supported direct Transform curves.
+- [ ] Bind to the correct rig and reconstruct supported humanoid/muscle data.
+- [ ] Add play/pause/stop/loop/scrub/speed controls.
 - [ ] Verify with at least one real clip and compare against source metadata.
 
 ### M5 — Effects runtime
