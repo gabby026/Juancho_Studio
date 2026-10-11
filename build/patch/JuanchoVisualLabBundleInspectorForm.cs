@@ -53,7 +53,7 @@ namespace AssetStudioGUI
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(1120, 680);
             Size = new Size(1580, 940);
-            Font = new Font("Segoe UI", 9F);
+            Font = new System.Drawing.Font("Segoe UI", 9F);
             BuildUi();
 
             foreach (var path in _heroBundles)
@@ -139,10 +139,10 @@ namespace AssetStudioGUI
             _details.Dock = DockStyle.Fill;
             _details.ReadOnly = true;
             _details.WordWrap = false;
-            _details.Font = new Font("Consolas", 9F);
+            _details.Font = new System.Drawing.Font("Consolas", 9F);
             _texturePreview.Dock = DockStyle.Fill;
             _texturePreview.SizeMode = PictureBoxSizeMode.Zoom;
-            _texturePreview.BackColor = Color.FromArgb(38, 38, 42);
+            _texturePreview.BackColor = System.Drawing.Color.FromArgb(38, 38, 42);
             _textureInfo.AutoSize = true;
             _textureInfo.MaximumSize = new Size(520, 0);
             _textureInfo.Text = "Select a Texture2D or a material/renderer to inspect its texture slots.";
@@ -297,8 +297,8 @@ namespace AssetStudioGUI
 
                 if (transforms.Length == 0)
                 {
-                    var gameObjects = _bundleObjects.OfType<GameObject>().ToArray();
-                    foreach (var go in gameObjects)
+                    var fallbackGameObjects = _bundleObjects.OfType<GameObject>().ToArray();
+                    foreach (var go in fallbackGameObjects)
                     {
                         var node = new TreeNode("GameObject: " + go.m_Name) { Tag = go, ToolTipText = ObjectTooltip(go) };
                         root.Nodes.Add(node);
@@ -540,7 +540,8 @@ namespace AssetStudioGUI
             if (obj is Renderer renderer) result.AddRange(ResolveMaterials(renderer));
             if (obj is Component component)
             {
-                var go = GetGameObject(component);
+                GameObject go = null;
+                try { if (component.m_GameObject != null) component.m_GameObject.TryGet(out go); } catch { }
                 if (go != null)
                     foreach (var linked in GetComponents(go).OfType<Renderer>())
                         result.AddRange(ResolveMaterials(linked));
@@ -622,7 +623,7 @@ namespace AssetStudioGUI
                 try { slot.Value?.m_Texture?.TryGet(out texture); } catch { }
                 var display = texture as Texture2D;
                 var panel = new Panel { Width = 190, Height = 190, Margin = new Padding(6), BorderStyle = BorderStyle.FixedSingle };
-                var picture = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = Color.FromArgb(38, 38, 42) };
+                var picture = new PictureBox { Dock = DockStyle.Fill, SizeMode = PictureBoxSizeMode.Zoom, BackColor = System.Drawing.Color.FromArgb(38, 38, 42) };
                 if (display != null)
                 {
                     picture.Image = TryConvertTexture(display, out var diagnostic);
@@ -784,13 +785,12 @@ namespace AssetStudioGUI
                 case AnimationClip clip:
                     lines.Add("Legacy: " + clip.m_Legacy);
                     lines.Add("Compressed: " + clip.m_Compressed);
-                    lines.Add("High quality curve: " + clip.m_HighQualityCurve);
                     lines.Add("Sample rate: " + clip.m_SampleRate);
                     lines.Add("Muscle clip present: " + (clip.m_MuscleClip != null));
                     lines.Add("Events: " + (clip.m_Events?.Length ?? 0));
                     break;
-                case Shader shader:
-                    lines.Add("Shader name: " + (shader.m_ParsedForm?.m_Name ?? shader.m_Name));
+                case Shader selectedShader:
+                    lines.Add("Shader name: " + (selectedShader.m_ParsedForm?.m_Name ?? selectedShader.m_Name));
                     break;
             }
 
