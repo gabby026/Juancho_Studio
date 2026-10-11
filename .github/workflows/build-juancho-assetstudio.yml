@@ -115,10 +115,10 @@ jobs:
           2. Scan a package folder or select multiple Unity bundles.
           3. Visual Lab looks specifically for `hero_<heroname>_skin.unity3d` and requires that same file to contain Mesh, GameObject, and AnimationClip objects.
           4. If found, the player lists only the model roots and AnimationClips from that hero-skin bundle. Select a clip to load/play it; use Play/Pause/Stop, Loop, speed, scrubbing, and mouse orbit/pan/zoom.
-          5. In Serialized Objects, use Inspect hero_skin as Prefab to open the Unity-style bundle inspector. It builds the real GameObject/Transform hierarchy and shows components, SkinnedMeshRenderer bones, Mesh references, Renderer material slots, Shader links, and Texture2D links.
-          6. Select a Texture2D to decode and view it. Select a GameObject, renderer, mesh, or material to show associated material texture slots and image thumbnails when the source data resolves.
-          7. Use the All Bundle Objects tree to list every parsed object by class and Path ID. The inspector reports serialized object entries that AssetStudio did not parse instead of silently implying complete support.
-          8. Use the general Serialized Objects table for cross-bundle references. Use Preview Selected Model / Mesh for geometry or Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
+          5. In Serialized Objects, use Inspect hero_skin as Prefab to open the Unity-style bundle inspector. It builds the GameObject/Transform/component hierarchy and exposes SkinnedMeshRenderer bones, Mesh references, Material slots, Shaders and Texture2D links.
+          6. In All Bundle Objects, parsed objects are grouped by class and Path ID; unparsed serialized entries are shown separately with class ID, Path ID, byte offset and size.
+          7. Select a Texture2D to decode/view it, or select a GameObject, renderer, mesh or material to inspect its links. Press 3D Preview with Texture Maps to render UV-mapped geometry using resolved material texture slots, tint/UV scale/offset, and best-effort CPU skinning.
+          8. Use the general Serialized Objects table for cross-bundle references. Use Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
           9. Use Skill Timeline to author and save manual event timings.
 
           Safety:
@@ -130,7 +130,7 @@ jobs:
           Current limitations:
           - The player is an initial reconstruction adapter: direct, streamed, dense, constant, and supported compressed rotation channels are decoded; CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
           - Humanoid/muscle-only clips requiring Avatar reconstruction, AnimatorController/state machines, and game-specific logic are not yet supported.
-          - The prefab inspector decodes Texture2D maps and shows material-saved texture slots, but the 3D preview does not yet render them with full Unity/MLBB shader, UV-transform, normal-map, transparency and blend-mode parity.
+          - The textured viewport maps a primary texture per material/submesh and applies UV scale/offset and tint when available, but it is not Unity's renderer: original MLBB shader programs, additional maps, shader keywords, animation, alpha clipping, blend modes and exact lighting are not reproduced.
           - Unity particle/trail playback and executable skill timelines remain unimplemented.
           - Validate real hero packages on Windows; a successful build alone does not prove the selected model/clip binding is correct.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
