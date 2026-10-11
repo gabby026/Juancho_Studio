@@ -1294,11 +1294,11 @@ namespace AssetStudioGUI
                     if (!visitedRenderers.Add(renderKey)) continue;
                     Mesh mesh = null;
                     SkinnedMeshRenderer skinned = renderer as SkinnedMeshRenderer;
-                    if (skinned != null) TryGet(skinned.m_Mesh, out mesh);
+                    if (skinned != null) mesh = TryGet(skinned.m_Mesh);
                     else
                     {
                         var filter = components.OfType<MeshFilter>().FirstOrDefault();
-                        if (filter != null) TryGet(filter.m_Mesh, out mesh);
+                        if (filter != null) mesh = TryGet(filter.m_Mesh);
                     }
                     if (mesh == null || mesh.m_VertexCount <= 0 || mesh.m_Vertices == null ||
                         mesh.m_Vertices.Length < mesh.m_VertexCount * 3 ||
@@ -1413,9 +1413,9 @@ namespace AssetStudioGUI
                     try { slot.Value?.m_Texture?.TryGet(out texture); } catch { }
                     if (!(texture is Texture2D texture2D)) continue;
                     textureKey = ObjectIdentity(texture2D);
-                    uvScale = slot.Value?.m_Scale == null ? NVector2.One :
+                    uvScale = slot.Value == null ? NVector2.One :
                         new NVector2(slot.Value.m_Scale.X, slot.Value.m_Scale.Y);
-                    uvOffset = slot.Value?.m_Offset == null ? NVector2.Zero :
+                    uvOffset = slot.Value == null ? NVector2.Zero :
                         new NVector2(slot.Value.m_Offset.X, slot.Value.m_Offset.Y);
                     if (!_textures.TryGetValue(textureKey, out image))
                     {
@@ -1648,7 +1648,7 @@ namespace AssetStudioGUI
             (obj?.assetsFile?.fullName ?? "") + "|" + (obj?.assetsFile?.originalPath ?? "") + "|" +
             (obj?.assetsFile?.fileName ?? "?") + "|" + (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
 
-        private static void InitializeGl()
+        private static void ConfigureGlDefaults()
         {
             GL.ClearColor(System.Drawing.Color.FromArgb(20, 23, 30));
             GL.Enable(EnableCap.DepthTest);
@@ -1658,7 +1658,7 @@ namespace AssetStudioGUI
 
         private void InitializeGl()
         {
-            InitializeGl();
+            ConfigureGlDefaults();
             const string vertexSource = @"#version 330 core
 in vec3 vertexPosition;
 in vec3 normalDirection;
