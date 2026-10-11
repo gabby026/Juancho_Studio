@@ -348,8 +348,15 @@ namespace Juancho.VisualLab
                 foreach (var hierarchyRoot in bundleRoots)
                 {
                     if (nodeByIdentity.ContainsKey(Identity(hierarchyRoot))) continue;
-                    string rootPathPrefix = anchorAncestors.Contains(Identity(hierarchyRoot)) ? "" : "@bundle";
-                    BuildNodes(hierarchyRoot, -1, rootPathPrefix, scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+                    string rootIdentity = Identity(hierarchyRoot);
+                    string anchorIdentity = Identity(rootTransform);
+                    string rootPathPrefix = string.Equals(rootIdentity, anchorIdentity, StringComparison.OrdinalIgnoreCase)
+                        ? ""
+                        : anchorAncestors.Contains(rootIdentity) ? "@anchorParent" : "@bundle";
+                    // Only the selected animation anchor may have the empty path. Giving a
+                    // helper/root Transform above it the same empty path replays the same root
+                    // curve on both nodes, compounding scales and making the mesh stretch.
+                    BuildNodes(hierarchyRoot, -1, rootPathPrefix, scene, transforms, nodeByIdentity, visitedTransforms, 0, anchorIdentity);
                 }
                 // Some game bundles have incomplete parent pointers. Add any remaining transform
                 // as a detached hierarchy so its mesh and bone references are not silently dropped.
