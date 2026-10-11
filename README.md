@@ -13,19 +13,20 @@ Current capabilities:
 - Inspect serialized object names, Unity classes, source file, Path ID, Unity version, platform, and object-reference counts.
 - Inspect resolved and unresolved PPtr dependencies across the selected package.
 - Inspect AnimationClip duration, sample rate, curve bindings/key counts, embedded events, and playback-readiness diagnostics.
-- Preview one static `Mesh` or combine an indexed `GameObject`'s available child `MeshFilter`/`SkinnedMeshRenderer` geometry in an interactive viewport with orbit, pan, zoom, reset, and wireframe controls.
+- Preview one static `Mesh` or combine an indexed `GameObject` hierarchy into an interactive 3D viewport.
+- Open **Interactive Model + Animation Player**, choose a `GameObject` model root and an `AnimationClip`, then play/pause/stop, scrub, loop, and change playback speed. It evaluates directly keyed position/scale/rotation curves and compressed rotation keys where available; supported skinned meshes are CPU-deformed from recovered skin weights, bind poses, bone references, and the evaluated hierarchy.
 - Filter discovered objects by likely role: model geometry, animation, visual effects, material/texture, scene hierarchy, audio, or game-specific component. Role labels are classification hints; preview readiness is shown separately.
 - Save a scan report and author/save/reopen manually timed skill-sequence projects.
 - Prevent scan reports and new timeline files from being saved inside known imported source roots.
 
 ## What is not implemented yet
 
-This is a foundation build, **not yet the complete live simulator**. The current viewport only combines geometry into a static view. It does not yet:
+This is a foundation build, **not yet the complete live simulator**. Interactive playback is an initial reconstruction adapter, not a replacement for Unity's full Animator. It does not yet:
 - render recovered materials, textures, UV animation, or the original MLBB shader pipeline;
 - deform skinned meshes using the correct skeleton, bind poses, and animation curves;
 - play AnimationClips in real time;
 - simulate Unity ParticleSystem / TrailRenderer effects;
-- execute the skill timeline against animated models and effects or reproduce full MLBB gameplay logic.
+- play particle/trail effects or the saved skill timeline as an executable multi-track sequence.
 
 Skinned meshes included by the current static GameObject preview are shown without bone deformation. A listed reference or resolved pointer does not mean an asset is fully renderable or its gameplay behavior is available.
 
