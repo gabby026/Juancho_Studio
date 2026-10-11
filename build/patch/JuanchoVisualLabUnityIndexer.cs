@@ -281,8 +281,8 @@ namespace Juancho.VisualLab
             {
                 item.Role = "Model geometry";
                 item.PreviewReadiness = normalizedType == "Mesh"
-                    ? "Mesh data available to exporter; live viewport bridge pending"
-                    : "Renderer reference indexed; model assembly pending";
+                    ? "Static geometry preview available; material/texture rendering pending"
+                    : "Renderer reference indexed; model assembly and skinning support are limited";
                 return;
             }
 
@@ -296,7 +296,9 @@ namespace Juancho.VisualLab
             if (Matches(normalizedType, "GameObject", "Transform", "RectTransform"))
             {
                 item.Role = "Scene hierarchy";
-                item.PreviewReadiness = "Object indexed; hierarchy reconstruction pending";
+                item.PreviewReadiness = normalizedType == "GameObject"
+                    ? "Static child-mesh hierarchy preview available; rig deformation/material rendering pending"
+                    : "Hierarchy transform indexed; full scene reconstruction pending";
                 return;
             }
 
