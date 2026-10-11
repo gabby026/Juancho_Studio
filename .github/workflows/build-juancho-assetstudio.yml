@@ -115,7 +115,8 @@ jobs:
           2. Scan a package folder or select multiple Unity bundles.
           3. Select "Analyze Unity Bundle Contents" to parse serialized Unity objects and inspect PPtr dependencies.
           4. Use the Serialized Objects tab to inspect object type, source file, Path ID, and resolved/unresolved references.
-          5. Select an object with Unity class Mesh and click Preview Selected Mesh (static) to orbit, pan, zoom, and toggle wireframe for its geometry.
+          5. Select a Mesh or GameObject object and click Preview Selected Model / Mesh (static) to orbit, pan, zoom, and toggle wireframe.
+             GameObject preview combines available child MeshFilter / SkinnedMeshRenderer geometry; skinned meshes are shown without bone deformation.
           6. Use Skill Timeline to author and save manual event timings.
 
           Safety:
@@ -125,7 +126,7 @@ jobs:
           - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
           Current limitations:
-          - The 3D viewport currently draws one serialized Mesh as static geometry; it does not yet assemble a complete hero/GameObject hierarchy or render recovered materials and textures.
+          - The 3D viewport draws one Mesh or combines a GameObject subtree as static geometry, but does not render recovered materials, textures, or the original shader pipeline.
           - Skinned-mesh deformation and rig binding are not connected yet.
           - AnimationClip playback, Unity particle/trail runtime, shader reconstruction, and executing the skill timeline are not available in this foundation build.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
