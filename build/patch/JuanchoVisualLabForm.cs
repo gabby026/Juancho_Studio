@@ -753,18 +753,25 @@ namespace AssetStudioGUI
 
                 if (openPlaybackWhenReady)
                 {
-                    bool hasModelRoot = result.Assets.Any(x => string.Equals(x.ClassName, "GameObject", StringComparison.OrdinalIgnoreCase));
-                    bool hasClip = result.Assets.Any(x => string.Equals(x.ClassName, "AnimationClip", StringComparison.OrdinalIgnoreCase));
-                    if (hasModelRoot && hasClip)
+                    var heroSkinBundles = JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(result.InputFiles);
+                    var playableSkinBundles = heroSkinBundles
+                        .Where(path => JuanchoVisualLabAnimationPlaybackForm.BundleHasModelAndClip(result.Assets, path))
+                        .ToArray();
+
+                    if (playableSkinBundles.Length > 0)
                     {
-                        _statusLabel.Text = "Opening interactive model + AnimationClip preview";
+                        _statusLabel.Text = "Opening hero_skin bundle AnimationClip player";
                         OpenAnimationPlayback();
                     }
                     else
                     {
+                        string foundBundles = heroSkinBundles.Length == 0
+                            ? "No file named hero_<heroname>_skin.unity3d was found in the scanned inputs."
+                            : "Found hero_skin bundle(s), but none contained all three required object types (Mesh, GameObject, and AnimationClip) in the same bundle.";
                         MessageBox.Show(this,
-                            "The package scan completed, but the loaded bundles did not expose both a GameObject model hierarchy and an AnimationClip. Try selecting the full hero/skin folder with its related animation bundles. No source files were changed.",
-                            "Juancho MLBB Visual Lab — Preview not ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                            "The interactive player needs the hero's own hero_<heroname>_skin.unity3d file, not an unrelated skill/effect bundle. " + foundBundles + Environment.NewLine + Environment.NewLine +
+                            "Scan the complete hero package folder and verify that the *_skin.unity3d file is included. Source files were not changed.",
+                            "Juancho MLBB Visual Lab — Hero skin bundle not ready", MessageBoxButtons.OK, MessageBoxIcon.Information);
                     }
                 }
             }
