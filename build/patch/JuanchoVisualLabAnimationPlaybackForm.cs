@@ -1187,7 +1187,10 @@ namespace Juancho.VisualLab
         }
 
         private static string Identity(UnityObject obj) =>
-            (obj?.assetsFile?.fullName ?? obj?.assetsFile?.originalPath ?? "?") + "|" + (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
+            (obj?.assetsFile?.fullName ?? "") + "|" +
+            (obj?.assetsFile?.originalPath ?? "") + "|" +
+            (obj?.assetsFile?.fileName ?? "?") + "|" +
+            (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
 
         // Unity serializes column-vector matrices; transpose to System.Numerics row-vector convention.
         private static NMatrix ToNumerics(AssetStudio.Matrix4x4 m) =>
