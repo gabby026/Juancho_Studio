@@ -770,9 +770,7 @@ namespace AssetStudioGUI
             {
                 _scene = null; _playing = false; _timer.Stop();
                 _status.Text = "Preview failed: " + ex.Message;
-                MessageBox.Show(this, "Could not load the model and AnimationClip. The source package was not changed.
-
-" + ex.Message,
+                MessageBox.Show(this, "Could not load the model and AnimationClip. The source package was not changed.\r\n\r\n" + ex.Message,
                     "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
             finally { _loadButton.Enabled = true; }
