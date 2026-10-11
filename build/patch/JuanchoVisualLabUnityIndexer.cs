@@ -283,7 +283,7 @@ namespace Juancho.VisualLab
                     if (field.Name == "reader" || field.Name == "assetsFile" || field.Name == "assetsManager" ||
                         field.Name == "serializedType" || field.Name == "version" || field.Name == "buildType" ||
                         field.Name == "platform" || field.Name == "m_PathID" || field.Name == "byteSize" ||
-                        field.Name == "m_CachedPtr" || field.Name == "m_GameObject")
+                        field.Name == "m_CachedPtr")
                     {
                         continue;
                     }
