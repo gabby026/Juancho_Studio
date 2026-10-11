@@ -140,8 +140,9 @@ The current foundation UI exposes Package Explorer, Skill Timeline, and an expli
 ### M3 — Static geometry preview and first real 3D proof of concept
 - [x] Add an interactive OpenGL viewport for indexed standalone Mesh objects, with orbit, pan, zoom, reset, and wireframe controls.
 - [x] Extract standalone Mesh vertex/index data from isolated source copies without writing to original bundles.
-- [ ] Validate the static viewport against one Mesh in the real Nana fixture.
-- [ ] Assemble a full GameObject hierarchy with MeshRenderer / SkinnedMeshRenderer.
+- [x] Walk a selected GameObject's Transform descendants and combine available MeshFilter / SkinnedMeshRenderer meshes into one static preview, applying their transform hierarchy.
+- [ ] Validate both standalone Mesh and GameObject hierarchy previews against the real Nana fixture.
+- [ ] Compare bind-pose static geometry against expected model shape; skinning deformation remains disabled.
 - [ ] Assign the correct recovered texture and material.
 - [ ] Verify rig transforms and coordinate handedness.
 
