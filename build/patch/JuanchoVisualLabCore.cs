@@ -232,6 +232,7 @@ namespace Juancho.VisualLab
         private static async Task<bool> IsCandidateAsync(string path, CancellationToken token)
         {
             var extension = Path.GetExtension(path);
+            if (IsUnitySplitPartExtension(extension)) return true;
             if (KnownExtensions.Contains(extension)) return true;
             if (!string.IsNullOrEmpty(extension)) return false;
 
@@ -254,6 +255,7 @@ namespace Juancho.VisualLab
         {
             var ext = Path.GetExtension(path);
             var name = Path.GetFileNameWithoutExtension(path);
+            if (IsUnitySplitPartExtension(ext)) return "Unity split part candidate";
             if (ext.Equals(".unity3d", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".bundle", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".ab", StringComparison.OrdinalIgnoreCase))
@@ -283,6 +285,13 @@ namespace Juancho.VisualLab
                 name.IndexOf("eff_", StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Potential effect/skill asset (name heuristic)";
             return "Other recognized companion";
+        }
+
+        private static bool IsUnitySplitPartExtension(string extension)
+        {
+            if (string.IsNullOrWhiteSpace(extension) || !extension.StartsWith(".split", StringComparison.OrdinalIgnoreCase)) return false;
+            var suffix = extension.Substring(6);
+            return suffix.Length > 0 && suffix.All(char.IsDigit);
         }
 
         internal static bool IsWithinDirectory(string path, string directory)
