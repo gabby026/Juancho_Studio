@@ -20,6 +20,10 @@ jobs:
       - name: Checkout build files
         uses: actions/checkout@v4
 
+      - name: Test Visual Lab core
+        shell: pwsh
+        run: dotnet run --project tests\\JuanchoVisualLabCore.SmokeTests.csproj --configuration Release
+
       - name: Clone AssetStudio upstream
         shell: pwsh
         run: git clone --depth 1 https://github.com/perfare/AssetStudio.git "$env:GITHUB_WORKSPACE\AssetStudio"
@@ -27,6 +31,10 @@ jobs:
       - name: Apply Juancho Texture2D feature
         shell: pwsh
         run: '& "$env:GITHUB_WORKSPACE\build\patch.ps1"'
+
+      - name: Apply Juancho MLBB Visual Lab foundation
+        shell: pwsh
+        run: '& "$env:GITHUB_WORKSPACE\\build\\patch-visual-lab.ps1"'
 
       - name: Restore
         working-directory: AssetStudio
@@ -124,6 +132,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish latest package
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
