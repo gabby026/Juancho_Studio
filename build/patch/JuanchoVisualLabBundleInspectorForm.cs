@@ -232,10 +232,10 @@ namespace AssetStudioGUI
             {
                 foreach (var candidate in _bundleObjects.OfType<GameObject>())
                 {
-                    foreach (var component in GetComponents(candidate))
+                    foreach (var candidateComponent in GetComponents(candidate))
                     {
-                        if (component is MeshFilter filter && ReferenceEquals(TryGet(filter.m_Mesh), mesh)) return candidate;
-                        if (component is SkinnedMeshRenderer skin && ReferenceEquals(TryGet(skin.m_Mesh), mesh)) return candidate;
+                        if (candidateComponent is MeshFilter filter && ReferenceEquals(TryGet(filter.m_Mesh), mesh)) return candidate;
+                        if (candidateComponent is SkinnedMeshRenderer skin && ReferenceEquals(TryGet(skin.m_Mesh), mesh)) return candidate;
                     }
                 }
             }
