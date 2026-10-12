@@ -30,6 +30,19 @@ internal static class Program
             Assert(scan.Assets.Count == 3, "Scanner should find both Unity bundle candidates and the texture.");
             Assert(scan.Assets.Any(x => x.Category == "Unity bundle candidate"), "Bundle candidates should be categorized.");
             Assert(scan.Assets.Any(x => x.Category == "Texture candidate"), "Texture candidates should be categorized.");
+            Assert(scan.Assets.Any(x => x.Category.Contains("skill/effect path hint", StringComparison.OrdinalIgnoreCase)),
+                "Skill/effect bundles should be highlighted in the physical package scan.");
+            Assert(VisualLabSkillAssetClassifier.ClassifySlot("hero_zeo_skill_01_effect.unity3d") == "Skill 1",
+                "Explicit Skill 1 naming should map to the Skill 1 filter.");
+            Assert(VisualLabSkillAssetClassifier.ClassifySlot("hero_zeo_skill_2_trail") == "Skill 2",
+                "Explicit Skill 2 naming should map to the Skill 2 filter.");
+            Assert(VisualLabSkillAssetClassifier.ClassifySlot("hero_zeo_skill3_projectile") == "Skill 3",
+                "Compact Skill 3 naming should map to the Skill 3 filter.");
+            Assert(VisualLabSkillAssetClassifier.ClassifySlot("hero_zeo_passive_fx") == "Passive",
+                "Passive naming should be recognized when the hero package includes passive assets.");
+            Assert(VisualLabSkillAssetClassifier.IsTextureExtension(".tga") &&
+                   VisualLabSkillAssetClassifier.IsTextureExtension(".png"),
+                "Unity/raw texture input extensions should be supported.");
             Assert(scan.ProtectedSourceRoots.Contains(Path.GetFullPath(source)), "The selected source directory must be marked protected.");
             Assert(scan.Assets.All(x => x.Sha256.Length == 64), "Every indexed file should have a SHA-256 hash.");
             Assert(scan.Assets.Any(x => x.SuggestedFolderGroup.Contains("effects")), "Folder grouping metadata should be retained.");
@@ -91,7 +104,7 @@ internal static class Program
             catch (ArgumentOutOfRangeException) { invalidRejected = true; }
             Assert(invalidRejected, "Negative timeline times must be rejected.");
 
-            Console.WriteLine("PASS: package scan, SHA-256 inventory, category/grouping, source preservation, export guard, sequence save/reload, and timing validation.");
+            Console.WriteLine("PASS: package scan, skill/effect categorization, skill-slot classifier, texture extension recognition, SHA-256 inventory, source preservation, export guard, sequence save/reload, and timing validation.");
             return 0;
         }
         finally
