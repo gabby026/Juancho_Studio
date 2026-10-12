@@ -20,6 +20,10 @@ jobs:
       - name: Checkout build files
         uses: actions/checkout@v4
 
+      - name: Test Visual Lab core
+        shell: pwsh
+        run: dotnet run --project tests/JuanchoVisualLabCore.SmokeTests.csproj --configuration Release
+
       - name: Clone AssetStudio upstream
         shell: pwsh
         run: git clone --depth 1 https://github.com/perfare/AssetStudio.git "$env:GITHUB_WORKSPACE\AssetStudio"
@@ -27,6 +31,10 @@ jobs:
       - name: Apply Juancho Texture2D feature
         shell: pwsh
         run: '& "$env:GITHUB_WORKSPACE\build\patch.ps1"'
+
+      - name: Apply Juancho MLBB Visual Lab foundation
+        shell: pwsh
+        run: '& "$env:GITHUB_WORKSPACE/build/patch-visual-lab.ps1"'
 
       - name: Restore
         working-directory: AssetStudio
@@ -98,20 +106,45 @@ jobs:
         shell: pwsh
         run: |
           $readme = @'
-          Juancho AssetStudio
-          
+          Juancho Studio — AssetStudio + MLBB Visual Lab foundation
+
           Open AssetStudioGUI.exe.
+
+          Visual Lab:
+          1. Open Menu -> MLBB Visual Lab.
+          2. Scan a package folder or select multiple Unity bundles.
+          3. Visual Lab looks specifically for `hero_<heroname>_skin.unity3d` and requires that same file to contain Mesh, GameObject, and AnimationClip objects.
+          4. If found, the player lists only the model roots and AnimationClips from that hero-skin bundle. Select a clip to load/play it; use Play/Pause/Stop, Loop, speed, scrubbing, and mouse orbit/pan/zoom.
+          5. In Serialized Objects, use Inspect hero_skin as Prefab to open the Unity-style bundle inspector. It builds the GameObject/Transform/component hierarchy and exposes SkinnedMeshRenderer bones, Mesh references, Material slots, Shaders and Texture2D links.
+          6. In All Bundle Objects, parsed objects are grouped by class and Path ID; unparsed serialized entries are shown separately with class ID, Path ID, byte offset and size.
+          7. Select a Texture2D to decode/view it, or select a GameObject, renderer, mesh or material to inspect its links. Press 3D Preview with Texture Maps to render UV-mapped geometry using resolved material texture slots, tint/UV scale/offset, and best-effort CPU skinning.
+          8. Use the general Serialized Objects table for cross-bundle references. Use Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
+          9. Use Skill Timeline to author and save manual event timings.
+          10. In Serialized Objects, open Skill 1 / 2 / 3 + Effects + Texture2D Explorer. Slot buttons group explicitly named assets and their resolved references; the Passive button appears when passive evidence is found. If slot names are absent, the explorer clearly falls back to unassigned skill/effect candidates instead of guessing.
+          11. Texture2D / Images lists embedded Texture2D/Sprite objects and loose texture files discovered by Package Explorer. Select a parsed Texture2D and use Inspect Selected Asset / Texture2D to decode it in the bundle inspector.
+          12. Scan the entire hero package folder (skin + skill/effect bundles + companion textures/resources) for the fullest available reference graph. Selected bundle inputs limit which cross-bundle references can resolve.
+
+          Safety:
+          - Visual Lab parses isolated temporary copies of selected Unity input files.
+          - Source package files are not written by the Visual Lab inventory or object-analysis functions.
+          - Save scan reports and timeline projects outside the imported source folders.
+          - Bundle grouping includes filename/folder heuristics; only serialized PPtr references are actual parsed dependencies.
           
-          Usage:
-          1. Load your Unity .unity3d / assets file.
+          Current limitations:
+          - The player is an initial reconstruction adapter: direct, streamed, dense, constant, and supported compressed rotation channels are decoded; CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
+          - Humanoid/muscle-only clips requiring Avatar reconstruction, AnimatorController/state machines, and game-specific logic are not yet supported.
+          - The textured viewport maps a primary texture per material/submesh and applies UV scale/offset and tint when available, but it is not Unity's renderer: original MLBB shader programs, additional maps, shader keywords, animation, alpha clipping, blend modes and exact lighting are not reproduced.
+          - The skill explorer inventories and groups ParticleSystem/TrailRenderer, AnimationClip, material and texture assets using serialized references plus explicit name/path hints. It does not yet reproduce Unity particle simulation, controller logic, shader effects, root-motion or the complete MLBB skill runtime.
+          - Skill-slot labels are heuristic when the original package does not encode clear Skill 1/2/3/Passive names. A successful build confirms compile/package success, not exact skill fidelity.
+          - Validate real hero packages on Windows; a successful build alone does not prove the selected model/clip binding is correct.
+          - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
+
+          Existing Juancho Texture2D replacement:
+          1. Load your Unity .unity3d / assets file in the main AssetStudio window.
           2. Select exactly one Texture2D.
           3. Open Juancho -> Replace selected texture.
-          4. Select PNG/JPG/BMP/TGA.
-          5. Confirm the Texture2D settings.
-          6. Save the modified Unity file.
-          
-          Save writes back into the currently opened Unity file. A .bak backup of the pre-save file is kept beside it.
-          The package includes the native texture encoder and classdata.tpk for files that use external TypeTrees.
+          4. Select the replacement image and confirm Texture2D settings.
+          5. Save. This explicit texture-edit operation writes to the opened Unity file and keeps a .bak backup.
           '@
           Set-Content "$env:GITHUB_WORKSPACE\publish\README-Juancho.txt" $readme -Encoding UTF8
           Compress-Archive -Path "$env:GITHUB_WORKSPACE\publish\*" -DestinationPath "$env:GITHUB_WORKSPACE\Juancho-AssetStudio-Windows-x64.zip" -Force
@@ -124,6 +157,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish latest package
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
