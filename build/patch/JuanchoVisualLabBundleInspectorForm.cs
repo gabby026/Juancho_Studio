@@ -1099,8 +1099,12 @@ namespace AssetStudioGUI
         private static bool IsBundleCandidate(string path)
         {
             var extension = Path.GetExtension(path ?? "");
-            return new[] { ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource" }
-                .Contains(extension, StringComparer.OrdinalIgnoreCase);
+            if (new[] { ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource" }
+                .Contains(extension, StringComparer.OrdinalIgnoreCase))
+                return true;
+            if (!extension.StartsWith(".split", StringComparison.OrdinalIgnoreCase)) return false;
+            var suffix = extension.Substring(6);
+            return suffix.Length > 0 && suffix.All(char.IsDigit);
         }
 
         private static string[] CopyInputs(string[] inputs, string workspace, Dictionary<string, string> workspaceToOriginal)
