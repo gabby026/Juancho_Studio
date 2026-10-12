@@ -17,6 +17,8 @@ $playbackSource = Join-Path $workspace 'build\patch\JuanchoVisualLabAnimationPla
 $playbackTarget = Join-Path $gui 'JuanchoVisualLabAnimationPlaybackForm.cs'
 $bundleInspectorSource = Join-Path $workspace 'build\patch\JuanchoVisualLabBundleInspectorForm.cs'
 $bundleInspectorTarget = Join-Path $gui 'JuanchoVisualLabBundleInspectorForm.cs'
+$skillExplorerSource = Join-Path $workspace 'build\patch\JuanchoVisualLabSkillExplorerForm.cs'
+$skillExplorerTarget = Join-Path $gui 'JuanchoVisualLabSkillExplorerForm.cs'
 
 if (-not (Test-Path $formPath)) { throw "AssetStudioGUIForm.cs was not found at $formPath" }
 if (-not (Test-Path $coreSource)) { throw "Visual Lab core source was not found at $coreSource" }
@@ -26,6 +28,7 @@ if (-not (Test-Path $meshPreviewSource)) { throw "Visual Lab static mesh viewpor
 if (-not (Test-Path $animationInspectorSource)) { throw "Visual Lab AnimationClip inspector source was not found at $animationInspectorSource" }
 if (-not (Test-Path $playbackSource)) { throw "Visual Lab animation playback source was not found at $playbackSource" }
 if (-not (Test-Path $bundleInspectorSource)) { throw "Visual Lab hero bundle inspector source was not found at $bundleInspectorSource" }
+if (-not (Test-Path $skillExplorerSource)) { throw "Visual Lab skill/effect/Texture2D explorer source was not found at $skillExplorerSource" }
 
 Copy-Item $coreSource $coreTarget -Force
 Copy-Item $formSource $formTarget -Force
@@ -34,6 +37,7 @@ Copy-Item $meshPreviewSource $meshPreviewTarget -Force
 Copy-Item $animationInspectorSource $animationInspectorTarget -Force
 Copy-Item $playbackSource $playbackTarget -Force
 Copy-Item $bundleInspectorSource $bundleInspectorTarget -Force
+Copy-Item $skillExplorerSource $skillExplorerTarget -Force
 
 $formText = Get-Content $formPath -Raw
 $marker = 'JUANCHO_VISUAL_LAB_MENU_START'
