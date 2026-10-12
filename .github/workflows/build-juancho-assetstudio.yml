@@ -120,6 +120,9 @@ jobs:
           7. Select a Texture2D to decode/view it, or select a GameObject, renderer, mesh or material to inspect its links. Press 3D Preview with Texture Maps to render UV-mapped geometry using resolved material texture slots, tint/UV scale/offset, and best-effort CPU skinning.
           8. Use the general Serialized Objects table for cross-bundle references. Use Inspect Selected AnimationClip for duration, curve bindings/key counts, and events.
           9. Use Skill Timeline to author and save manual event timings.
+          10. In Serialized Objects, open Skill 1 / 2 / 3 + Effects + Texture2D Explorer. Slot buttons group explicitly named assets and their resolved references; the Passive button appears when passive evidence is found. If slot names are absent, the explorer clearly falls back to unassigned skill/effect candidates instead of guessing.
+          11. Texture2D / Images lists embedded Texture2D/Sprite objects and loose texture files discovered by Package Explorer. Select a parsed Texture2D and use Inspect Selected Asset / Texture2D to decode it in the bundle inspector.
+          12. Scan the entire hero package folder (skin + skill/effect bundles + companion textures/resources) for the fullest available reference graph. Selected bundle inputs limit which cross-bundle references can resolve.
 
           Safety:
           - Visual Lab parses isolated temporary copies of selected Unity input files.
@@ -131,7 +134,8 @@ jobs:
           - The player is an initial reconstruction adapter: direct, streamed, dense, constant, and supported compressed rotation channels are decoded; CPU skinning is attempted when weights, bind poses, and bone references are available. It is not Unity's exact Animator.
           - Humanoid/muscle-only clips requiring Avatar reconstruction, AnimatorController/state machines, and game-specific logic are not yet supported.
           - The textured viewport maps a primary texture per material/submesh and applies UV scale/offset and tint when available, but it is not Unity's renderer: original MLBB shader programs, additional maps, shader keywords, animation, alpha clipping, blend modes and exact lighting are not reproduced.
-          - Unity particle/trail playback and executable skill timelines remain unimplemented.
+          - The skill explorer inventories and groups ParticleSystem/TrailRenderer, AnimationClip, material and texture assets using serialized references plus explicit name/path hints. It does not yet reproduce Unity particle simulation, controller logic, shader effects, root-motion or the complete MLBB skill runtime.
+          - Skill-slot labels are heuristic when the original package does not encode clear Skill 1/2/3/Passive names. A successful build confirms compile/package success, not exact skill fidelity.
           - Validate real hero packages on Windows; a successful build alone does not prove the selected model/clip binding is correct.
           - Reproducing full MLBB skill behavior requires the relevant runtime logic as well as asset data.
 
