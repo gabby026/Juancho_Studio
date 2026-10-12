@@ -648,32 +648,26 @@ namespace Juancho.VisualLab
                 return;
             }
 
-            var min = new NVector3(float.PositiveInfinity);
-            var max = new NVector3(float.NegativeInfinity);
-            for (int i = 0; i < part.Vertices.Length; i += 3)
+            // Bind poses may intentionally contain the mesh-to-rig basis conversion.
+            // Do not reject them merely because the resulting pose is not equal to the
+            // raw vertex coordinates transformed by the renderer. Validate the actual
+            // skinned output for finite positions and implausible expansion instead.
+            var sourceMin = new NVector3(float.PositiveInfinity);
+            var sourceMax = new NVector3(float.NegativeInfinity);
+            var outputMin = new NVector3(float.PositiveInfinity);
+            var outputMax = new NVector3(float.NegativeInfinity);
+            for (int vertex = 0; vertex < vertexCount; vertex++)
             {
-                var v = new NVector3(part.Vertices[i], part.Vertices[i + 1], part.Vertices[i + 2]);
-                min = NVector3.Min(min, v);
-                max = NVector3.Max(max, v);
-            }
+                int vertexOffset = vertex * 3;
+                var source = new NVector3(
+                    part.Vertices[vertexOffset],
+                    part.Vertices[vertexOffset + 1],
+                    part.Vertices[vertexOffset + 2]);
+                sourceMin = NVector3.Min(sourceMin, source);
+                sourceMax = NVector3.Max(sourceMax, source);
 
-            var diagonal = Math.Max((max - min).Length(), 0.0001f);
-            var stride = Math.Max(1, vertexCount / 96);
-            double standardError = 0;
-            double standardMaxError = 0;
-            int samples = 0;
-
-            // Validate only Unity's canonical matrix order. Comparing two guessed orders and
-            // choosing whichever resembles the rigid rest pose slightly more can select the
-            // inverse order for assets with nearly-identity transforms, then stretch the mesh
-            // as soon as animated bones rotate. The canonical order is always bindPose * boneWorld.
-            for (int vertex = 0; vertex < vertexCount; vertex += stride)
-            {
-                var source = new NVector3(part.Vertices[vertex * 3], part.Vertices[vertex * 3 + 1], part.Vertices[vertex * 3 + 2]);
-                var expected = NVector3.Transform(source, rendererWorld);
-                NVector3 standard = NVector3.Zero;
+                NVector3 skinned = NVector3.Zero;
                 float weightTotal = 0;
-
                 for (int influence = 0; influence < 4; influence++)
                 {
                     int slot = vertex * 4 + influence;
@@ -682,49 +676,55 @@ namespace Juancho.VisualLab
 
                     int boneIndex = part.BoneIndices[slot];
                     int boneNode = part.BoneNodeIndices[boneIndex];
-                    var bindPose = part.BindPoses[boneIndex];
-                    standard += NVector3.Transform(source, bindPose * worlds[boneNode]) * weight;
+                    var skinMatrix = part.BindPoses[boneIndex] * worlds[boneNode];
+                    skinned += NVector3.Transform(source, skinMatrix) * weight;
                     weightTotal += weight;
                 }
 
-                if (weightTotal <= 0.00001f) continue;
-                standard /= weightTotal;
-                var error = NVector3.Distance(standard, expected) / diagonal;
-                standardError += error;
-                standardMaxError = Math.Max(standardMaxError, error);
-                samples++;
+                if (weightTotal <= 0.00001f)
+                {
+                    // Preserve the normal rigid transform for intentionally unweighted vertices.
+                    skinned = NVector3.Transform(source, rendererWorld);
+                }
+                else
+                {
+                    skinned /= weightTotal;
+                }
+
+                if (!IsFinite(skinned.X) || !IsFinite(skinned.Y) || !IsFinite(skinned.Z))
+                {
+                    if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
+                        return;
+                    part.SkinningStatus = "Stored bind poses produced non-finite vertices; using rigid fallback";
+                    return;
+                }
+
+                outputMin = NVector3.Min(outputMin, skinned);
+                outputMax = NVector3.Max(outputMax, skinned);
             }
 
-            if (samples == 0)
+            float sourceDiagonal = Math.Max((sourceMax - sourceMin).Length(), 0.0001f);
+            float outputDiagonal = (outputMax - outputMin).Length();
+            float spanRatio = outputDiagonal / sourceDiagonal;
+
+            // A broad guard for genuinely broken bind data. Valid MLBB bind poses may
+            // rotate the mesh into the rig's basis, so the old point-by-point comparison
+            // against rendererWorld * vertex was not a valid test and discarded good poses.
+            // Reject only missing/non-finite output or an extreme size explosion.
+            if (!IsFinite(spanRatio) || spanRatio < 0.08f || spanRatio > 2.5f)
             {
                 if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
                     return;
-                part.SkinningStatus = "No usable weighted vertices; using rigid fallback";
-                return;
-            }
 
-            var meanError = standardError / samples;
-            if (!double.IsFinite(meanError) || !double.IsFinite(standardMaxError) ||
-                meanError > 0.12 || standardMaxError > 0.45)
-            {
-                // Never try an alternate multiplication order as a shortcut: reconstruct
-                // bind poses against the current rest transforms, and keep the source safe
-                // if the renderer/bone coordinate spaces still cannot be reconciled.
-                if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
-                    return;
-
-                part.SkinningStatus = string.Format(
-                    "Unity-order bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
-                    meanError, standardMaxError);
+                part.SkinningStatus = "Stored bind-pose output span is implausible; using rigid fallback";
                 return;
             }
 
             part.SkinningMatrixOrder = 0;
             part.SkinningReliable = true;
-            bool approximate = meanError > 0.04 || standardMaxError > 0.20;
-            part.SkinningStatus = (approximate ? "Approximate Unity-order CPU skinning enabled (" : "Unity-order bind-pose calibrated (") +
-                "mean error " + meanError.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
-                ", max sampled error " + standardMaxError.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
+            part.SkinningStatus = "Imported bind-pose basis preserved; CPU skinning enabled (rest output span " +
+                spanRatio.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) +
+                "× source mesh span)";
         }
 
         private static bool TryReconstructRestPoseBindPoses(
@@ -1359,9 +1359,14 @@ namespace Juancho.VisualLab
             (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
 
         // Unity serializes column-vector matrices; transpose to System.Numerics row-vector convention.
+        // AssetStudio reads Unity's serialized matrix values into column-ordered fields.
+        // Reassemble them row-wise for System.Numerics so the bind-pose's mesh-to-rig basis
+        // conversion is retained instead of being cancelled by the serialized field order.
         private static NMatrix ToNumerics(AssetStudio.Matrix4x4 m) =>
-            new NMatrix(m.M00, m.M10, m.M20, m.M30, m.M01, m.M11, m.M21, m.M31,
-                m.M02, m.M12, m.M22, m.M32, m.M03, m.M13, m.M23, m.M33);
+            new NMatrix(m.M00, m.M01, m.M02, m.M03,
+                m.M10, m.M11, m.M12, m.M13,
+                m.M20, m.M21, m.M22, m.M23,
+                m.M30, m.M31, m.M32, m.M33);
 
         private static float[] ReadNormals(float[] source, int vertexCount)
         {
