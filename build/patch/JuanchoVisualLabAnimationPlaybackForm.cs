@@ -564,42 +564,51 @@ namespace Juancho.VisualLab
 
 
         /// <summary>
-        /// Calibrates the skinning coordinate convention against the mesh's bind pose.
-        /// A partial or inconsistent bone map causes severe vertex spikes when only some
-        /// influences are applied; in that case the preview intentionally uses a rigid
-        /// renderer transform instead of displaying a corrupted mesh.
+        /// Calibrates skinning against the rest pose. If serialized bind poses use a coordinate
+        /// convention that does not match this isolated preview, reconstruct equivalent bind
+        /// matrices from the renderer and bone rest transforms. This preserves the displayed
+        /// rest pose while allowing animated bones to deform the mesh, instead of silently
+        /// freezing the complete SkinnedMeshRenderer in rigid fallback.
         /// </summary>
         private static void ValidateSkinningBinding(PlaybackMeshPart part, List<PlaybackNode> nodes)
         {
             part.SkinningReliable = false;
             part.SkinningMatrixOrder = 0;
-            part.SkinningStatus = "No valid bind-pose skinning data; using rigid fallback";
+            part.SkinningStatus = "No valid skinning data; using rigid fallback";
+
             int vertexCount = part.Vertices?.Length / 3 ?? 0;
-            if (vertexCount <= 0 || part.Weights == null || part.Weights.Length != vertexCount * 4 ||
+            if (vertexCount <= 0 ||
+                part.Weights == null || part.Weights.Length != vertexCount * 4 ||
                 part.BoneIndices == null || part.BoneIndices.Length != part.Weights.Length ||
-                part.BindPoses == null || part.BindPoses.Length == 0 ||
                 part.BoneNodeIndices == null || part.BoneNodeIndices.Length == 0 ||
                 part.NodeIndex < 0 || part.NodeIndex >= nodes.Count)
             {
-                part.SkinningStatus = "Missing or mismatched skin weights, bind poses, bone references, or renderer transform";
+                part.SkinningStatus = "Missing or mismatched skin weights, bone references, or renderer transform";
                 return;
             }
 
             bool hasInfluence = false;
+            bool storedPosesUsable = part.BindPoses != null && part.BindPoses.Length > 0;
             for (int i = 0; i < part.Weights.Length; i++)
             {
-                var weight = part.Weights[i];
+                float weight = part.Weights[i];
                 if (!IsFinite(weight) || weight <= 0.00001f) continue;
                 hasInfluence = true;
+
                 int boneIndex = part.BoneIndices[i];
-                if (boneIndex < 0 || boneIndex >= part.BindPoses.Length ||
-                    boneIndex >= part.BoneNodeIndices.Length ||
-                    part.BoneNodeIndices[boneIndex] < 0 || part.BoneNodeIndices[boneIndex] >= nodes.Count)
+                if (boneIndex < 0 || boneIndex >= part.BoneNodeIndices.Length ||
+                    part.BoneNodeIndices[boneIndex] < 0 ||
+                    part.BoneNodeIndices[boneIndex] >= nodes.Count)
                 {
-                    part.SkinningStatus = "At least one weighted bone does not resolve to a Transform in the loaded hierarchy; skipped partial skinning to prevent stretched spikes";
+                    part.SkinningStatus = "A weighted bone does not resolve to a Transform; skinning skipped to prevent stretched vertices";
                     return;
                 }
+
+                if (part.BindPoses == null || boneIndex >= part.BindPoses.Length ||
+                    !IsFiniteMatrix(part.BindPoses[boneIndex]))
+                    storedPosesUsable = false;
             }
+
             if (!hasInfluence)
             {
                 part.SkinningStatus = "Mesh has no positive bone weights; using rigid fallback";
@@ -625,6 +634,16 @@ namespace Juancho.VisualLab
                     : local;
             }
 
+            var rendererWorld = worlds[part.NodeIndex];
+            if (!storedPosesUsable)
+            {
+                if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
+                    return;
+
+                part.SkinningStatus = "Serialized bind poses are missing or invalid, and rest-pose reconstruction was not possible; using rigid fallback";
+                return;
+            }
+
             var min = new NVector3(float.PositiveInfinity);
             var max = new NVector3(float.NegativeInfinity);
             for (int i = 0; i < part.Vertices.Length; i += 3)
@@ -634,7 +653,6 @@ namespace Juancho.VisualLab
                 max = NVector3.Max(max, v);
             }
             var diagonal = Math.Max((max - min).Length(), 0.0001f);
-            var rendererWorld = worlds[part.NodeIndex];
             var stride = Math.Max(1, vertexCount / 96);
             double standardError = 0;
             double alternateError = 0;
@@ -656,10 +674,9 @@ namespace Juancho.VisualLab
                     float weight = part.Weights[slot];
                     if (!IsFinite(weight) || weight <= 0) continue;
                     int boneIndex = part.BoneIndices[slot];
-                    int boneNode = part.BoneNodeIndices[boneIndex];
                     var bindPose = part.BindPoses[boneIndex];
-                    standard += NVector3.Transform(source, bindPose * worlds[boneNode]) * weight;
-                    alternate += NVector3.Transform(source, worlds[boneNode] * bindPose) * weight;
+                    standard += NVector3.Transform(source, bindPose * worlds[part.BoneNodeIndices[boneIndex]]) * weight;
+                    alternate += NVector3.Transform(source, worlds[part.BoneNodeIndices[boneIndex]] * bindPose) * weight;
                     weightTotal += weight;
                 }
 
@@ -677,6 +694,8 @@ namespace Juancho.VisualLab
 
             if (samples == 0)
             {
+                if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
+                    return;
                 part.SkinningStatus = "No usable weighted vertices; using rigid fallback";
                 return;
             }
@@ -688,8 +707,16 @@ namespace Juancho.VisualLab
             part.SkinningMatrixOrder = alternateScore < standardScore ? 1 : 0;
             var bestMean = part.SkinningMatrixOrder == 1 ? alternateMean : standardMean;
             var bestMax = part.SkinningMatrixOrder == 1 ? alternateMaxError : standardMaxError;
+
             if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.12 || bestMax > 0.45)
             {
+                // A hard rigid fallback is visually safe, but it makes every animation appear
+                // broken. Derive a per-bone rest matrix only after the original matrix orders
+                // fail validation. At time zero each bone contributes the renderer's rest pose;
+                // subsequent frames apply the actual relative bone motion.
+                if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
+                    return;
+
                 part.SkinningStatus = string.Format(
                     "Severe bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
                     bestMean, bestMax);
@@ -703,6 +730,50 @@ namespace Juancho.VisualLab
                 ", mean error " + bestMean.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
                 ", max sampled error " + bestMax.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
         }
+
+        private static bool TryReconstructRestPoseBindPoses(
+            PlaybackMeshPart part, NMatrix[] worlds, NMatrix rendererWorld)
+        {
+            if (part == null || worlds == null ||
+                part.BoneNodeIndices == null || part.BoneNodeIndices.Length == 0)
+                return false;
+
+            var reconstructed = new NMatrix[part.BoneNodeIndices.Length];
+            for (int boneIndex = 0; boneIndex < part.BoneNodeIndices.Length; boneIndex++)
+            {
+                int boneNode = part.BoneNodeIndices[boneIndex];
+                // Unweighted/unresolved entries are harmless identity placeholders. Every
+                // positively weighted index was validated before this method is called.
+                if (boneNode < 0 || boneNode >= worlds.Length)
+                {
+                    reconstructed[boneIndex] = NMatrix.Identity;
+                    continue;
+                }
+
+                if (!NMatrix.Invert(worlds[boneNode], out var inverseBoneWorld))
+                    return false;
+
+                var effectiveBindPose = rendererWorld * inverseBoneWorld;
+                if (!IsFiniteMatrix(effectiveBindPose))
+                    return false;
+                reconstructed[boneIndex] = effectiveBindPose;
+            }
+
+            // Row-vector convention used by System.Numerics:
+            // vertex * (rendererRest * inverse(boneRest)) * boneCurrent.
+            // At the rest pose this equals vertex * rendererRest, avoiding a pose jump.
+            part.BindPoses = reconstructed;
+            part.SkinningMatrixOrder = 0;
+            part.SkinningReliable = true;
+            part.SkinningStatus = "Rest-pose bind matrices reconstructed from resolved renderer/bone transforms; animated CPU skinning enabled";
+            return true;
+        }
+
+        private static bool IsFiniteMatrix(NMatrix m) =>
+            IsFinite(m.M11) && IsFinite(m.M12) && IsFinite(m.M13) && IsFinite(m.M14) &&
+            IsFinite(m.M21) && IsFinite(m.M22) && IsFinite(m.M23) && IsFinite(m.M24) &&
+            IsFinite(m.M31) && IsFinite(m.M32) && IsFinite(m.M33) && IsFinite(m.M34) &&
+            IsFinite(m.M41) && IsFinite(m.M42) && IsFinite(m.M43) && IsFinite(m.M44);
 
         private static void BuildClip(VisualLabPlaybackScene scene, AssetStudio.AnimationClip clip, VisualLabUnityAssetItem item, List<AssetStudio.Transform> transforms)
         {
