@@ -7,6 +7,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -83,13 +84,61 @@ namespace Juancho.VisualLab
         public List<VisualLabTimelineEvent> Events { get; set; } = new List<VisualLabTimelineEvent>();
     }
 
+    public static class VisualLabSkillAssetClassifier
+    {
+        private static readonly Regex PassivePattern = new Regex(
+            @"(?i)(?:^|[^a-z0-9])(?:passive|innate|passiv)(?:$|[^a-z0-9])",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        private static readonly Regex[] SkillPatterns =
+        {
+            new Regex(@"(?i)(?:^|[^a-z0-9])(?:skill|ability|spell|cast|sp|sk|s)[ _.\-]*0?1(?:$|[^0-9])", RegexOptions.Compiled | RegexOptions.CultureInvariant),
+            new Regex(@"(?i)(?:^|[^a-z0-9])(?:skill|ability|spell|cast|sp|sk|s)[ _.\-]*0?2(?:$|[^0-9])", RegexOptions.Compiled | RegexOptions.CultureInvariant),
+            new Regex(@"(?i)(?:^|[^a-z0-9])(?:skill|ability|spell|cast|sp|sk|s)[ _.\-]*0?3(?:$|[^0-9])", RegexOptions.Compiled | RegexOptions.CultureInvariant)
+        };
+
+        public static string ClassifySlot(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "";
+            if (PassivePattern.IsMatch(value)) return "Passive";
+            for (int i = 0; i < SkillPatterns.Length; i++)
+                if (SkillPatterns[i].IsMatch(value)) return "Skill " + (i + 1);
+            return "";
+        }
+
+        public static bool IsEffectOrSkillPath(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return false;
+            var lower = value.ToLowerInvariant();
+            return lower.Contains("skill") || lower.Contains("ability") || lower.Contains("spell") ||
+                   lower.Contains("effect") || lower.Contains("eff_") || lower.Contains("particle") ||
+                   lower.Contains("projectile") || lower.Contains("trail") || lower.Contains("impact") ||
+                   lower.Contains("passive") || lower.Contains("summon") || lower.Contains("ult_") ||
+                   lower.Contains("_ult") || lower.Contains("bullet") || lower.Contains("explosion");
+        }
+
+        public static bool IsTextureExtension(string extension)
+        {
+            switch ((extension ?? "").ToLowerInvariant())
+            {
+                case ".png": case ".jpg": case ".jpeg": case ".bmp": case ".gif":
+                case ".tif": case ".tiff": case ".tga": case ".dds": case ".ktx":
+                case ".astc": case ".pvr": case ".webp": case ".exr": case ".hdr":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+    }
+
     public static class VisualLabPackageScanner
     {
         private static readonly HashSet<string> KnownExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".ress", ".resource",
-            ".bytes", ".manifest", ".png", ".jpg", ".jpeg", ".tga", ".dds", ".ktx", ".astc",
-            ".pvr", ".wav", ".ogg", ".mp3"
+            ".bytes", ".manifest", ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff", ".webp",
+            ".tga", ".dds", ".ktx", ".astc", ".pvr", ".exr", ".hdr", ".wav", ".ogg", ".mp3",
+            ".prefab", ".mat", ".anim", ".controller", ".shader", ".json", ".lua"
         };
 
         private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
@@ -259,31 +308,28 @@ namespace Juancho.VisualLab
             if (ext.Equals(".unity3d", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".bundle", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".ab", StringComparison.OrdinalIgnoreCase))
-                return "Unity bundle candidate";
+                return VisualLabSkillAssetClassifier.IsEffectOrSkillPath(path)
+                    ? "Unity bundle candidate — skill/effect path hint"
+                    : "Unity bundle candidate";
             if (ext.Equals(".assets", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".asset", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".ress", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".resource", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".bytes", StringComparison.OrdinalIgnoreCase))
                 return "Unity asset / companion candidate";
-            if (ext.Equals(".png", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".jpg", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".jpeg", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".tga", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".dds", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".ktx", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".astc", StringComparison.OrdinalIgnoreCase) ||
-                ext.Equals(".pvr", StringComparison.OrdinalIgnoreCase))
+            if (VisualLabSkillAssetClassifier.IsTextureExtension(ext))
                 return "Texture candidate";
             if (ext.Equals(".wav", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".ogg", StringComparison.OrdinalIgnoreCase) ||
                 ext.Equals(".mp3", StringComparison.OrdinalIgnoreCase))
                 return "Audio candidate";
             if (ext.Equals(".manifest", StringComparison.OrdinalIgnoreCase)) return "Manifest candidate";
-            if (name.IndexOf("effect", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("skill", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                name.IndexOf("eff_", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Potential effect/skill asset (name heuristic)";
+            if (VisualLabSkillAssetClassifier.IsEffectOrSkillPath(path))
+                return "Potential effect/skill asset (name/path heuristic)";
+            if (new[] { ".prefab", ".mat", ".anim", ".controller", ".shader" }.Contains(ext, StringComparer.OrdinalIgnoreCase))
+                return "Unity source asset candidate";
+            if (ext.Equals(".json", StringComparison.OrdinalIgnoreCase) || ext.Equals(".lua", StringComparison.OrdinalIgnoreCase))
+                return "Script / metadata candidate";
             return "Other recognized companion";
         }
 
