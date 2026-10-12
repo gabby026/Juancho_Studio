@@ -316,12 +316,46 @@ namespace Juancho.VisualLab
                         SafeFullPath(ResolveOriginalPath(file, workspaceToOriginal, inputs, workspace)),
                         selectedBundlePath, StringComparison.OrdinalIgnoreCase))
                     .ToArray();
-                var bundleTransforms = selectedBundleFiles
+                var selectedBundleObjects = selectedBundleFiles
                     .SelectMany(file => file.Objects ?? new List<UnityObject>())
+                    .ToArray();
+                var transformMap = selectedBundleObjects
                     .OfType<AssetStudio.Transform>()
                     .GroupBy(Identity, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.First())
-                    .ToArray();
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+                // A few MLBB bundles reference the SkinnedMeshRenderer bones from a companion
+                // serialized file. Pull in the referenced bones and their ancestors so weighted
+                // vertices can still follow the AnimationClip rather than falling back rigidly.
+                foreach (var gameObject in selectedBundleObjects.OfType<AssetStudio.GameObject>())
+                {
+                    foreach (var componentPointer in gameObject.m_Components ?? Array.Empty<PPtr<AssetStudio.Component>>())
+                    {
+                        if (componentPointer == null ||
+                            !componentPointer.TryGet(out AssetStudio.Component component) ||
+                            !(component is AssetStudio.SkinnedMeshRenderer renderer))
+                            continue;
+
+                        foreach (var bonePointer in renderer.m_Bones ?? Array.Empty<PPtr<AssetStudio.Transform>>())
+                        {
+                            if (bonePointer == null || !bonePointer.TryGet(out AssetStudio.Transform bone) || bone == null)
+                                continue;
+
+                            var ancestryVisited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            while (bone != null && ancestryVisited.Add(Identity(bone)))
+                            {
+                                transformMap[Identity(bone)] = bone;
+                                if (bone.m_Father == null ||
+                                    !bone.m_Father.TryGet(out AssetStudio.Transform parent) ||
+                                    parent == null)
+                                    break;
+                                bone = parent;
+                            }
+                        }
+                    }
+                }
+
+                var bundleTransforms = transformMap.Values.ToArray();
                 var bundleTransformIds = new HashSet<string>(bundleTransforms.Select(Identity), StringComparer.OrdinalIgnoreCase);
 
                 // Preserve the selected GameObject as the animation path anchor, while bringing
@@ -398,6 +432,8 @@ namespace Juancho.VisualLab
                     "; skinned mesh parts: " + scene.SkinnedPartCount +
                     "; parts with calibrated skinning: " + partsWithSkinWeights +
                     "; parts using safe rigid fallback: " + partsWithRigidFallback +
+                    "; decoded tracks: " + scene.Tracks.Count +
+                    "; transform keys: " + scene.Tracks.Sum(track => track.Positions.Length + track.Rotations.Length + track.EulerRotations.Length + track.Scales.Length) +
                     "; clip events: " + scene.ClipEventCount + ". " +
                     (skinningWarnings.Length == 0 ? "" : "Skinning fallback: " + string.Join(" | ", skinningWarnings) + ". ") +
                     (scene.DirectCurveCount == 0
@@ -652,16 +688,17 @@ namespace Juancho.VisualLab
             part.SkinningMatrixOrder = alternateScore < standardScore ? 1 : 0;
             var bestMean = part.SkinningMatrixOrder == 1 ? alternateMean : standardMean;
             var bestMax = part.SkinningMatrixOrder == 1 ? alternateMaxError : standardMaxError;
-            if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.04 || bestMax > 0.20)
+            if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.12 || bestMax > 0.45)
             {
                 part.SkinningStatus = string.Format(
-                    "Bind-pose calibration mismatch (mean {0:P1}, worst sampled vertex {1:P1}); using rigid fallback to avoid stretched spikes",
+                    "Severe bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
                     bestMean, bestMax);
                 return;
             }
 
             part.SkinningReliable = true;
-            part.SkinningStatus = "Bind-pose calibrated (" +
+            bool approximate = bestMean > 0.04 || bestMax > 0.20;
+            part.SkinningStatus = (approximate ? "Best-fit CPU skinning enabled (" : "Bind-pose calibrated (") +
                 (part.SkinningMatrixOrder == 1 ? "alternate matrix order" : "Unity bind-pose matrix order") +
                 ", mean error " + bestMean.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
                 ", max sampled error " + bestMax.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
@@ -818,9 +855,15 @@ namespace Juancho.VisualLab
             }
 
             var bindingConstant = clip.m_ClipBindingConstant;
-            if (bindingConstant == null && embeddedClip?.m_Binding != null)
+            if ((bindingConstant == null || bindingConstant.genericBindings == null || bindingConstant.genericBindings.Length == 0) &&
+                embeddedClip?.m_Binding != null)
             {
-                try { bindingConstant = embeddedClip.ConvertValueArrayToGenericBinding(); }
+                try
+                {
+                    var reconstructed = embeddedClip.ConvertValueArrayToGenericBinding();
+                    if (reconstructed?.genericBindings != null && reconstructed.genericBindings.Length > 0)
+                        bindingConstant = reconstructed;
+                }
                 catch (Exception ex) { extractionNote = AppendNote(extractionNote, "Binding table could not be reconstructed: " + ex.Message); }
             }
 
@@ -1042,6 +1085,52 @@ namespace Juancho.VisualLab
                     .GroupBy(k => Math.Round(k.Time, 6)).Select(group => group.First()).ToArray();
 
             var nodePaths = new HashSet<string>(scene.Nodes.Select(node => node.Path), StringComparer.Ordinal);
+            foreach (var sourceTrack in byPath.Values.ToArray())
+            {
+                if (nodePaths.Contains(sourceTrack.Path) ||
+                    string.IsNullOrWhiteSpace(sourceTrack.Path) ||
+                    sourceTrack.Path.StartsWith("#unresolved_", StringComparison.Ordinal))
+                    continue;
+
+                var sourcePath = sourceTrack.Path.Replace('\\', '/').Trim('/');
+                var lastSegment = sourcePath.Split('/').LastOrDefault();
+                if (string.IsNullOrWhiteSpace(lastSegment)) continue;
+
+                var matches = scene.Nodes
+                    .Where(node =>
+                        string.Equals(node.Name, lastSegment, StringComparison.Ordinal) ||
+                        (!string.IsNullOrEmpty(node.Path) &&
+                            (string.Equals(node.Path, sourcePath, StringComparison.Ordinal) ||
+                             node.Path.EndsWith("/" + sourcePath, StringComparison.Ordinal) ||
+                             sourcePath.EndsWith("/" + node.Path, StringComparison.Ordinal))))
+                    .Select(node => node.Path)
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(2)
+                    .ToArray();
+                if (matches.Length != 1) continue;
+
+                string targetPath = matches[0];
+                if (string.Equals(targetPath, sourceTrack.Path, StringComparison.Ordinal)) continue;
+                if (!byPath.TryGetValue(targetPath, out var targetTrack))
+                {
+                    byPath.Remove(sourceTrack.Path);
+                    sourceTrack.Path = targetPath;
+                    byPath[targetPath] = sourceTrack;
+                    continue;
+                }
+
+                targetTrack.Positions = targetTrack.Positions.Concat(sourceTrack.Positions)
+                    .OrderBy(key => key.Time).GroupBy(key => Math.Round(key.Time, 6)).Select(group => group.Last()).ToArray();
+                targetTrack.Rotations = targetTrack.Rotations.Concat(sourceTrack.Rotations)
+                    .OrderBy(key => key.Time).GroupBy(key => Math.Round(key.Time, 6)).Select(group => group.Last()).ToArray();
+                targetTrack.EulerRotations = targetTrack.EulerRotations.Concat(sourceTrack.EulerRotations)
+                    .OrderBy(key => key.Time).GroupBy(key => Math.Round(key.Time, 6)).Select(group => group.Last()).ToArray();
+                targetTrack.Scales = targetTrack.Scales.Concat(sourceTrack.Scales)
+                    .OrderBy(key => key.Time).GroupBy(key => Math.Round(key.Time, 6)).Select(group => group.Last()).ToArray();
+                byPath.Remove(sourceTrack.Path);
+            }
+
+            nodePaths = new HashSet<string>(scene.Nodes.Select(node => node.Path), StringComparer.Ordinal);
             foreach (var track in byPath.Values)
                 if (!nodePaths.Contains(track.Path)) scene.UnboundCurveCount++;
             scene.Tracks = byPath.Values.OrderBy(track => track.Path, StringComparer.Ordinal).ToList();
