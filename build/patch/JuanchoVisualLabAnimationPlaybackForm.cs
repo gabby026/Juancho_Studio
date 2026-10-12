@@ -362,6 +362,29 @@ namespace Juancho.VisualLab
                 var bundleTransforms = transformMap.Values.ToArray();
                 var bundleTransformIds = new HashSet<string>(bundleTransforms.Select(Identity), StringComparer.OrdinalIgnoreCase);
 
+                // The serialized m_Father references define the actual hierarchy even in
+                // bundles whose m_Children arrays are incomplete or stale. Build one canonical
+                // parent-to-child map from resolved father pointers and use it for all traversal.
+                var childrenByParent = new Dictionary<string, List<AssetStudio.Transform>>(StringComparer.OrdinalIgnoreCase);
+                foreach (var child in bundleTransforms)
+                {
+                    if (child?.m_Father == null ||
+                        !child.m_Father.TryGet(out AssetStudio.Transform parent) ||
+                        parent == null)
+                        continue;
+
+                    var parentIdentity = Identity(parent);
+                    if (!bundleTransformIds.Contains(parentIdentity))
+                        continue;
+
+                    if (!childrenByParent.TryGetValue(parentIdentity, out var childList))
+                    {
+                        childList = new List<AssetStudio.Transform>();
+                        childrenByParent[parentIdentity] = childList;
+                    }
+                    childList.Add(child);
+                }
+
                 // Preserve the selected GameObject as the animation path anchor, while bringing
                 // every connected hierarchy in the same hero skin bundle into the scene. This
                 // includes renderer objects and bones that sit outside the originally chosen subtree.
@@ -394,17 +417,17 @@ namespace Juancho.VisualLab
                     // Only the selected animation anchor may have the empty path. Giving a
                     // helper/root Transform above it the same empty path replays the same root
                     // curve on both nodes, compounding scales and making the mesh stretch.
-                    BuildNodes(hierarchyRoot, -1, rootPathPrefix, scene, transforms, nodeByIdentity, visitedTransforms, 0, anchorIdentity);
+                    BuildNodes(hierarchyRoot, -1, rootPathPrefix, scene, transforms, nodeByIdentity, visitedTransforms, 0, anchorIdentity, childrenByParent);
                 }
                 // Some game bundles have incomplete parent pointers. Add any remaining transform
                 // as a detached hierarchy so its mesh and bone references are not silently dropped.
                 foreach (var transform in bundleTransforms)
                 {
                     if (nodeByIdentity.ContainsKey(Identity(transform))) continue;
-                    BuildNodes(transform, -1, "@bundle", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+                    BuildNodes(transform, -1, "@bundle", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform), childrenByParent);
                 }
                 if (!nodeByIdentity.ContainsKey(Identity(rootTransform)))
-                    BuildNodes(rootTransform, -1, "", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform));
+                    BuildNodes(rootTransform, -1, "", scene, transforms, nodeByIdentity, visitedTransforms, 0, Identity(rootTransform), childrenByParent);
 
                 if (scene.Nodes.Count == 0) throw new InvalidDataException("The selected hero skin bundle contained no usable Transform nodes.");
                 AddMeshes(scene, transforms, nodeByIdentity, rootTransform, workspaceToOriginal, inputs, workspace);
@@ -460,7 +483,7 @@ namespace Juancho.VisualLab
         private static void BuildNodes(
             AssetStudio.Transform transform, int parentIndex, string path, VisualLabPlaybackScene scene,
             List<AssetStudio.Transform> transforms, Dictionary<string, int> nodeByIdentity, HashSet<string> visited, int depth,
-            string anchorIdentity)
+            string anchorIdentity, Dictionary<string, List<AssetStudio.Transform>> childrenByParent)
         {
             if (transform == null) return;
             if (depth > 512) throw new InvalidDataException("Transform hierarchy depth exceeded safety limit.");
@@ -487,9 +510,9 @@ namespace Juancho.VisualLab
             });
             transforms.Add(transform);
             nodeByIdentity[key] = nodeIndex;
-            foreach (var pointer in transform.m_Children ?? Array.Empty<PPtr<AssetStudio.Transform>>())
-                if (pointer != null && pointer.TryGet(out AssetStudio.Transform child) && child != null)
-                    BuildNodes(child, nodeIndex, ownPath, scene, transforms, nodeByIdentity, visited, depth + 1, anchorIdentity);
+            if (childrenByParent != null && childrenByParent.TryGetValue(key, out var linkedChildren))
+                foreach (var child in linkedChildren)
+                    BuildNodes(child, nodeIndex, ownPath, scene, transforms, nodeByIdentity, visited, depth + 1, anchorIdentity, childrenByParent);
         }
 
         private static void AddMeshes(
@@ -648,83 +671,91 @@ namespace Juancho.VisualLab
                 return;
             }
 
-            // Bind poses may intentionally contain the mesh-to-rig basis conversion.
-            // Do not reject them merely because the resulting pose is not equal to the
-            // raw vertex coordinates transformed by the renderer. Validate the actual
-            // skinned output for finite positions and implausible expansion instead.
-            var sourceMin = new NVector3(float.PositiveInfinity);
-            var sourceMax = new NVector3(float.NegativeInfinity);
-            var outputMin = new NVector3(float.PositiveInfinity);
-            var outputMax = new NVector3(float.NegativeInfinity);
-            for (int vertex = 0; vertex < vertexCount; vertex++)
+            var min = new NVector3(float.PositiveInfinity);
+            var max = new NVector3(float.NegativeInfinity);
+            for (int i = 0; i < part.Vertices.Length; i += 3)
             {
-                int vertexOffset = vertex * 3;
-                var source = new NVector3(
-                    part.Vertices[vertexOffset],
-                    part.Vertices[vertexOffset + 1],
-                    part.Vertices[vertexOffset + 2]);
-                sourceMin = NVector3.Min(sourceMin, source);
-                sourceMax = NVector3.Max(sourceMax, source);
+                var v = new NVector3(part.Vertices[i], part.Vertices[i + 1], part.Vertices[i + 2]);
+                min = NVector3.Min(min, v);
+                max = NVector3.Max(max, v);
+            }
+            var diagonal = Math.Max((max - min).Length(), 0.0001f);
+            var stride = Math.Max(1, vertexCount / 96);
+            double standardError = 0;
+            double alternateError = 0;
+            double standardMaxError = 0;
+            double alternateMaxError = 0;
+            int samples = 0;
 
-                NVector3 skinned = NVector3.Zero;
+            for (int vertex = 0; vertex < vertexCount; vertex += stride)
+            {
+                var source = new NVector3(part.Vertices[vertex * 3], part.Vertices[vertex * 3 + 1], part.Vertices[vertex * 3 + 2]);
+                var expected = NVector3.Transform(source, rendererWorld);
+                NVector3 standard = NVector3.Zero;
+                NVector3 alternate = NVector3.Zero;
                 float weightTotal = 0;
+
                 for (int influence = 0; influence < 4; influence++)
                 {
                     int slot = vertex * 4 + influence;
                     float weight = part.Weights[slot];
                     if (!IsFinite(weight) || weight <= 0) continue;
-
                     int boneIndex = part.BoneIndices[slot];
-                    int boneNode = part.BoneNodeIndices[boneIndex];
-                    var skinMatrix = part.BindPoses[boneIndex] * worlds[boneNode];
-                    skinned += NVector3.Transform(source, skinMatrix) * weight;
+                    var bindPose = part.BindPoses[boneIndex];
+                    standard += NVector3.Transform(source, bindPose * worlds[part.BoneNodeIndices[boneIndex]]) * weight;
+                    alternate += NVector3.Transform(source, worlds[part.BoneNodeIndices[boneIndex]] * bindPose) * weight;
                     weightTotal += weight;
                 }
 
-                if (weightTotal <= 0.00001f)
-                {
-                    // Preserve the normal rigid transform for intentionally unweighted vertices.
-                    skinned = NVector3.Transform(source, rendererWorld);
-                }
-                else
-                {
-                    skinned /= weightTotal;
-                }
-
-                if (!IsFinite(skinned.X) || !IsFinite(skinned.Y) || !IsFinite(skinned.Z))
-                {
-                    if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
-                        return;
-                    part.SkinningStatus = "Stored bind poses produced non-finite vertices; using rigid fallback";
-                    return;
-                }
-
-                outputMin = NVector3.Min(outputMin, skinned);
-                outputMax = NVector3.Max(outputMax, skinned);
+                if (weightTotal <= 0.00001f) continue;
+                standard /= weightTotal;
+                alternate /= weightTotal;
+                var standardNormalizedError = NVector3.Distance(standard, expected) / diagonal;
+                var alternateNormalizedError = NVector3.Distance(alternate, expected) / diagonal;
+                standardError += standardNormalizedError;
+                alternateError += alternateNormalizedError;
+                standardMaxError = Math.Max(standardMaxError, standardNormalizedError);
+                alternateMaxError = Math.Max(alternateMaxError, alternateNormalizedError);
+                samples++;
             }
 
-            float sourceDiagonal = Math.Max((sourceMax - sourceMin).Length(), 0.0001f);
-            float outputDiagonal = (outputMax - outputMin).Length();
-            float spanRatio = outputDiagonal / sourceDiagonal;
-
-            // A broad guard for genuinely broken bind data. Valid MLBB bind poses may
-            // rotate the mesh into the rig's basis, so the old point-by-point comparison
-            // against rendererWorld * vertex was not a valid test and discarded good poses.
-            // Reject only missing/non-finite output or an extreme size explosion.
-            if (!IsFinite(spanRatio) || spanRatio < 0.08f || spanRatio > 2.5f)
+            if (samples == 0)
             {
                 if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
                     return;
-
-                part.SkinningStatus = "Stored bind-pose output span is implausible; using rigid fallback";
+                part.SkinningStatus = "No usable weighted vertices; using rigid fallback";
                 return;
             }
 
-            part.SkinningMatrixOrder = 0;
+            var standardMean = standardError / samples;
+            var alternateMean = alternateError / samples;
+            var standardScore = standardMean + standardMaxError * 0.10;
+            var alternateScore = alternateMean + alternateMaxError * 0.10;
+            part.SkinningMatrixOrder = alternateScore < standardScore ? 1 : 0;
+            var bestMean = part.SkinningMatrixOrder == 1 ? alternateMean : standardMean;
+            var bestMax = part.SkinningMatrixOrder == 1 ? alternateMaxError : standardMaxError;
+
+            if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.12 || bestMax > 0.45)
+            {
+                // A hard rigid fallback is visually safe, but it makes every animation appear
+                // broken. Derive a per-bone rest matrix only after the original matrix orders
+                // fail validation. At time zero each bone contributes the renderer's rest pose;
+                // subsequent frames apply the actual relative bone motion.
+                if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
+                    return;
+
+                part.SkinningStatus = string.Format(
+                    "Severe bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
+                    bestMean, bestMax);
+                return;
+            }
+
             part.SkinningReliable = true;
-            part.SkinningStatus = "Imported bind-pose basis preserved; CPU skinning enabled (rest output span " +
-                spanRatio.ToString("0.00", System.Globalization.CultureInfo.InvariantCulture) +
-                "× source mesh span)";
+            bool approximate = bestMean > 0.04 || bestMax > 0.20;
+            part.SkinningStatus = (approximate ? "Best-fit CPU skinning enabled (" : "Bind-pose calibrated (") +
+                (part.SkinningMatrixOrder == 1 ? "alternate matrix order" : "Unity bind-pose matrix order") +
+                ", mean error " + bestMean.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
+                ", max sampled error " + bestMax.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
         }
 
         private static bool TryReconstructRestPoseBindPoses(
@@ -1359,14 +1390,14 @@ namespace Juancho.VisualLab
             (obj?.m_PathID.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "0");
 
         // Unity serializes column-vector matrices; transpose to System.Numerics row-vector convention.
-        // AssetStudio reads Unity's serialized matrix values into column-ordered fields.
-        // Reassemble them row-wise for System.Numerics so the bind-pose's mesh-to-rig basis
-        // conversion is retained instead of being cancelled by the serialized field order.
+        // Convert Unity's column-vector matrix to the equivalent System.Numerics
+        // row-vector matrix by transposing it. AssetStudio's fields reflect the serialized
+        // matrix entries, and CreateScale/Transform/LocalToWorld in this preview use row vectors.
         private static NMatrix ToNumerics(AssetStudio.Matrix4x4 m) =>
-            new NMatrix(m.M00, m.M01, m.M02, m.M03,
-                m.M10, m.M11, m.M12, m.M13,
-                m.M20, m.M21, m.M22, m.M23,
-                m.M30, m.M31, m.M32, m.M33);
+            new NMatrix(m.M00, m.M10, m.M20, m.M30,
+                m.M01, m.M11, m.M21, m.M31,
+                m.M02, m.M12, m.M22, m.M32,
+                m.M03, m.M13, m.M23, m.M33);
 
         private static float[] ReadNormals(float[] source, int vertexCount)
         {
