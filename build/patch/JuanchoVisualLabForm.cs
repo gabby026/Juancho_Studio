@@ -673,7 +673,7 @@ namespace AssetStudioGUI
             using (var dialog = new OpenFileDialog())
             {
                 dialog.Title = "Select one or more Unity bundles or companion assets";
-                dialog.Filter = "Unity and companion assets|*.unity3d;*.bundle;*.assets;*.asset;*.ab;*.ress;*.resource;*.bytes;*.png;*.jpg;*.jpeg;*.tga;*.dds;*.ktx;*.astc;*.pvr;*.split*|All files|*.*";
+                dialog.Filter = "Unity, skill/effect and texture assets|*.unity3d;*.bundle;*.assets;*.asset;*.ab;*.ress;*.resource;*.bytes;*.png;*.jpg;*.jpeg;*.bmp;*.gif;*.tif;*.tiff;*.webp;*.tga;*.dds;*.ktx;*.astc;*.pvr;*.exr;*.hdr;*.prefab;*.mat;*.anim;*.controller;*.shader;*.json;*.lua;*.split*|All files|*.*";
                 dialog.Multiselect = true;
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                     await ScanAsync(dialog.FileNames, true);
