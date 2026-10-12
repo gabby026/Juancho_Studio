@@ -658,7 +658,6 @@ namespace Juancho.VisualLab
             }
 
             var diagonal = Math.Max((max - min).Length(), 0.0001f);
-            var rendererWorld = worlds[part.NodeIndex];
             var stride = Math.Max(1, vertexCount / 96);
             double standardError = 0;
             double standardMaxError = 0;
