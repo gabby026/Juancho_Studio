@@ -87,7 +87,7 @@ namespace Juancho.VisualLab
     public static class VisualLabSkillAssetClassifier
     {
         private static readonly Regex PassivePattern = new Regex(
-            @"(?i)(?:^|[^a-z0-9])(?:passive|innate|passiv)(?:$|[^a-z0-9])",
+            @"(?i)(?:passive|innate|passiv)",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         private static readonly Regex[] SkillPatterns =
