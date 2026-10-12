@@ -627,9 +627,9 @@ namespace AssetStudioGUI
                 Location = new Point(22, 22)
             };
             _runtimeStatus.Text =
-                "Implemented in this foundation: read-only package inventory, SHA-256 duplicate detection, scan reports, AssetStudio-backed serialized-object indexing, PPtr dependency inspection, and a saved manual skill timeline. The dependency table reports actual references found in the selected parsed bundle set.\r\n\r\n" +
-                "Not implemented yet: a live skinned-mesh scene renderer, reconstructed AnimationClip playback, full MLBB ParticleSystem/shader reproduction, and executable timeline playback. Those remain gated on a real runtime proof-of-concept using a complete hero package.\r\n\r\n" +
-                "Source bundles are never edited by Visual Lab scanning or object indexing. Scan reports and sequence projects are blocked from being saved inside imported source folders. Import paths and serialized asset identifiers are retained for later runtime binding.";
+                "Implemented: read-only package inventory, SHA-256 duplicate detection, scan reports, AssetStudio-backed serialized-object indexing, actual PPtr dependency inspection, manual skill timeline authoring, static textured bundle inspection, and direct AnimationClip preview where supported.\r\n\r\n" +
+                "Skill / Effects / Texture2D Explorer: the Skill 1, Skill 2, Skill 3 and conditional Passive filters group serialized assets by explicit names/paths and follow resolved PPtr references. Loose image files discovered in Package Explorer are also available as texture candidates. Ambiguous assets remain unassigned rather than being falsely labeled.\r\n\r\n" +
+                "Limitations: exact in-game MLBB skill behavior still depends on the compatible Animator/Avatar, game-specific scripts, particle/trail simulation, shader programs, event timing, and any external dependencies. The explorer inventories and opens assets; it does not claim to reproduce those systems perfectly. Source bundles are parsed from isolated temporary copies and are not changed by scanning or inspection.";
             _runtimeStatus.AutoSize = false;
             _runtimeStatus.Location = new Point(22, 58);
             _runtimeStatus.Width = 850;
