@@ -956,7 +956,12 @@ namespace Juancho.VisualLab
                     // can explode animated vertices even when the Mesh and bind poses are valid.
                     if (streamedFrames != null && streamedCurveCount > 0)
                     {
-                        for (int frameIndex = 1; frameIndex < streamedFrames.Count - 1; frameIndex++)
+                        // ReadData returns the real endpoint frames as well as interior frames.
+                        // Dropping frame 0 and the last frame can leave a short skill clip with
+                        // only one sampled key, making Play advance the clock while the model stays
+                        // frozen. Keep all finite frames; ReadData only derives incoming tangents
+                        // for frame indices 2..Count-2, so endpoint interpolation remains linear.
+                        for (int frameIndex = 0; frameIndex < streamedFrames.Count; frameIndex++)
                         {
                             var frame = streamedFrames[frameIndex];
                             if (frame == null || !IsFinite(frame.time)) continue;
@@ -969,17 +974,22 @@ namespace Juancho.VisualLab
                                     scalarKeys = new List<PlaybackScalarKey>();
                                     streamedByCurve[key.index] = scalarKeys;
                                 }
-                                if (scalarKeys.Any(existing => Math.Abs(existing.Time - frame.time) < 0.000001f))
-                                    continue;
-                                scalarKeys.Add(new PlaybackScalarKey
+
+                                var decodedKey = new PlaybackScalarKey
                                 {
                                     Time = frame.time,
                                     Value = key.value,
                                     InSlope = key.inSlope,
                                     OutSlope = key.outSlope,
-                                    HasTangents = frameIndex >= 2 &&
+                                    HasTangents = frameIndex >= 2 && frameIndex < streamedFrames.Count - 1 &&
                                         IsFinite(key.inSlope) && IsFinite(key.outSlope)
-                                });
+                                };
+                                int duplicateIndex = scalarKeys.FindIndex(existing =>
+                                    Math.Abs(existing.Time - frame.time) < 0.000001f);
+                                if (duplicateIndex >= 0)
+                                    scalarKeys[duplicateIndex] = decodedKey;
+                                else
+                                    scalarKeys.Add(decodedKey);
                             }
                         }
                         foreach (var keys in streamedByCurve.Values)
