@@ -37,6 +37,7 @@ namespace Juancho.VisualLab
         public int FileId { get; set; }
         public long TargetPathId { get; set; }
         public string TargetFileName { get; set; } = "";
+        public string TargetAssetKey { get; set; } = "";
         public string TargetName { get; set; } = "";
         public string TargetClassName { get; set; } = "";
         public bool IsResolved { get; set; }
@@ -1332,6 +1333,7 @@ namespace Juancho.VisualLab
                 FileId = fileId,
                 TargetPathId = pathId,
                 TargetFileName = targetFileName,
+                TargetAssetKey = targetItem?.Key ?? "",
                 TargetName = targetItem?.Name ?? "",
                 TargetClassName = targetItem?.ClassName ?? "",
                 IsResolved = targetItem != null
