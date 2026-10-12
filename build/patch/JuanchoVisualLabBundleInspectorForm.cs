@@ -30,6 +30,9 @@ namespace AssetStudioGUI
         private readonly string[] _inputs;
         private readonly string[] _heroBundles;
         private readonly string _initialBundle;
+        private readonly long _initialPathId;
+        private readonly string _initialClassName;
+        private bool _initialSelectionApplied;
         private readonly ComboBox _bundlePicker = new ComboBox();
         private readonly TextBox _search = new TextBox();
         private readonly TreeView _hierarchyTree = new TreeView();
@@ -47,19 +50,27 @@ namespace AssetStudioGUI
         private HashSet<UnityObject> _bundleObjectSet = new HashSet<UnityObject>();
         private bool _loading;
 
-        public JuanchoVisualLabBundleInspectorForm(IEnumerable<string> packageInputs, IEnumerable<string> heroSkinBundles, string preferredBundle = null)
+        public JuanchoVisualLabBundleInspectorForm(
+            IEnumerable<string> packageInputs,
+            IEnumerable<string> bundlePaths,
+            string preferredBundle = null,
+            long preferredPathId = 0,
+            string preferredClassName = null)
         {
             _inputs = (packageInputs ?? Enumerable.Empty<string>())
                 .Where(File.Exists).Select(Path.GetFullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            _heroBundles = (heroSkinBundles ?? Enumerable.Empty<string>())
+            _heroBundles = (bundlePaths ?? Enumerable.Empty<string>())
                 .Where(File.Exists).Select(Path.GetFullPath)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Where(IsHeroSkinBundle).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToArray();
+                .Where(IsBundleCandidate).OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase).ToArray();
             _initialBundle = _heroBundles.FirstOrDefault(x => string.Equals(x, preferredBundle, StringComparison.OrdinalIgnoreCase))
+                ?? _heroBundles.FirstOrDefault(x => IsHeroSkinBundle(x))
                 ?? _heroBundles.FirstOrDefault();
+            _initialPathId = preferredPathId;
+            _initialClassName = preferredClassName ?? "";
 
-            Text = "Juancho MLBB Visual Lab — Hero Bundle / Prefab Inspector";
+            Text = "Juancho MLBB Visual Lab — Unity Bundle / Prefab / Texture Inspector";
             StartPosition = FormStartPosition.CenterParent;
             MinimumSize = new Size(1120, 680);
             Size = new Size(1580, 940);
@@ -138,7 +149,7 @@ namespace AssetStudioGUI
             root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
             var header = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true, WrapContents = true, Padding = new Padding(0, 0, 0, 6) };
-            header.Controls.Add(new Label { Text = "Hero skin bundle:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
+            header.Controls.Add(new Label { Text = "Unity bundle:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) });
             _bundlePicker.DropDownStyle = ComboBoxStyle.DropDownList;
             _bundlePicker.Width = 520;
             header.Controls.Add(_bundlePicker);
@@ -282,7 +293,7 @@ namespace AssetStudioGUI
             if (_state != null || _loading) return;
             if (_inputs.Length == 0 || _heroBundles.Length == 0)
             {
-                _status.Text = "No hero skin bundle was found. Scan the package folder and include hero_<heroname>_skin.unity3d.";
+                _status.Text = "No supported Unity bundle/serialized asset was found in this package. Include the hero skin and relevant skill/effect bundles.";
                 return;
             }
 
@@ -298,6 +309,7 @@ namespace AssetStudioGUI
                 else
                     _currentBundle = _initialBundle;
                 PopulateCurrentBundle();
+                SelectPreferredInitialObject();
             }
             catch (Exception ex)
             {
@@ -312,6 +324,19 @@ namespace AssetStudioGUI
                 _bundlePicker.Enabled = true;
                 _search.Enabled = true;
             }
+        }
+
+        private void SelectPreferredInitialObject()
+        {
+            if (_initialSelectionApplied || _initialPathId == 0 || string.IsNullOrWhiteSpace(_initialClassName))
+                return;
+            _initialSelectionApplied = true;
+            var selected = _bundleObjects.FirstOrDefault(obj =>
+                obj != null && obj.m_PathID == _initialPathId &&
+                (string.Equals(obj.type.ToString(), _initialClassName, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(obj.GetType().Name, _initialClassName, StringComparison.OrdinalIgnoreCase)));
+            if (selected != null)
+                SelectObject(selected);
         }
 
         private static BundleParseState ParseInputs(string[] inputs)
@@ -1069,6 +1094,13 @@ namespace AssetStudioGUI
             var name = System.IO.Path.GetFileName(path ?? "");
             return name.StartsWith("hero_", StringComparison.OrdinalIgnoreCase) &&
                 name.EndsWith("_skin.unity3d", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsBundleCandidate(string path)
+        {
+            var extension = Path.GetExtension(path ?? "");
+            return new[] { ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource" }
+                .Contains(extension, StringComparer.OrdinalIgnoreCase);
         }
 
         private static string[] CopyInputs(string[] inputs, string workspace, Dictionary<string, string> workspaceToOriginal)
