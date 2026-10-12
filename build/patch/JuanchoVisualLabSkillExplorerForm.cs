@@ -43,6 +43,7 @@ namespace AssetStudioGUI
         private readonly Label _summary = new Label();
         private readonly Label _detail = new Label();
         private readonly PictureBox _preview = new PictureBox();
+        private readonly Label _previewInfo = new Label();
         private readonly ListBox _references = new ListBox();
         private readonly Button _inspectButton = new Button();
         private readonly Button _passiveButton = new Button();
@@ -147,13 +148,14 @@ namespace AssetStudioGUI
             _grid.CellDoubleClick += (s, e) => InspectSelected();
             split.Panel1.Controls.Add(_grid);
 
-            var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(6, 0, 0, 0) };
-            right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            var right = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 7, Padding = new Padding(6, 0, 0, 0) };
+            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
             right.RowStyles.Add(new RowStyle(SizeType.Absolute, 150));
             right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            right.RowStyles.Add(new RowStyle(SizeType.Absolute, 240));
+            right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            right.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             _detail.AutoSize = false;
             _detail.Dock = DockStyle.Fill;
             _detail.BorderStyle = BorderStyle.FixedSingle;
@@ -164,22 +166,27 @@ namespace AssetStudioGUI
             _preview.SizeMode = PictureBoxSizeMode.Zoom;
             _preview.BackColor = Color.FromArgb(36, 38, 44);
             right.Controls.Add(_preview, 0, 1);
+            _previewInfo.AutoSize = true;
+            _previewInfo.Dock = DockStyle.Fill;
+            _previewInfo.Padding = new Padding(2, 4, 2, 4);
+            _previewInfo.Text = "Texture2D previews and raw image input appear here when selected.";
+            right.Controls.Add(_previewInfo, 0, 2);
             _inspectButton.Text = "Inspect Selected Asset / Texture2D…";
             _inspectButton.AutoSize = true;
             _inspectButton.Dock = DockStyle.Fill;
             _inspectButton.Click += (s, e) => InspectSelected();
-            right.Controls.Add(_inspectButton, 0, 2);
-            right.Controls.Add(new Label { Text = "Resolved package references", AutoSize = true, Padding = new Padding(0, 6, 0, 2) }, 0, 3);
+            right.Controls.Add(_inspectButton, 0, 3);
+            right.Controls.Add(new Label { Text = "Resolved package references", AutoSize = true, Padding = new Padding(0, 6, 0, 2) }, 0, 4);
             _references.Dock = DockStyle.Fill;
             _references.HorizontalScrollbar = true;
-            right.Controls.Add(_references, 0, 4);
+            right.Controls.Add(_references, 0, 5);
             right.Controls.Add(new Label
             {
                 Text = "Note: effects may require Unity runtime scripts, shaders, particle simulation, Animator state, and timing events. This view inventories evidence; it cannot guarantee exact in-game behavior from serialized assets alone.",
                 AutoSize = true,
                 MaximumSize = new Size(420, 0),
                 Padding = new Padding(0, 6, 0, 0)
-            }, 0, 5);
+            }, 0, 6);
             split.Panel2.Controls.Add(right);
 
             _summary.AutoSize = true;
@@ -254,7 +261,6 @@ namespace AssetStudioGUI
             foreach (var slot in new[] { "Skill 1", "Skill 2", "Skill 3", "Passive" })
                 slotCounts[slot] = _allRows.Count(row => SlotOf(row) == slot);
             _passiveButton.Text = "Passive (" + slotCounts["Passive"] + ")";
-            foreach (Control control in Controls) { }
         }
 
         private static string SlotOf(ExplorerRow row)
@@ -269,7 +275,6 @@ namespace AssetStudioGUI
         {
             _activePreset = preset ?? "All";
             _presetRows.Clear();
-            var unityAssets = (_index.Assets ?? new List<VisualLabUnityAssetItem>()).ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
             var dependencyEdges = _index.Dependencies ?? new List<VisualLabUnityDependency>();
             if (_activePreset == "All")
             {
@@ -478,10 +483,12 @@ namespace AssetStudioGUI
                 using (var image = Image.FromFile(file.FullPath))
                     SetPreview(new Bitmap(image));
                 _previewInfoText = "Loose image: " + Path.GetFileName(file.FullPath) + " · " + _preview.Image.Width + "×" + _preview.Image.Height;
+                _previewInfo.Text = _previewInfoText;
             }
             catch (Exception ex)
             {
                 _previewInfoText = "This file is indexed as a texture candidate, but this Windows image decoder cannot display its format directly: " + ex.Message;
+                _previewInfo.Text = _previewInfoText;
             }
         }
 
@@ -496,6 +503,7 @@ namespace AssetStudioGUI
             if (image != null) _preview.Image = image;
             _preview.Tag = _previewInfoText;
             _preview.AccessibleDescription = _previewInfoText;
+            _previewInfo.Text = _previewInfoText;
         }
 
         private void InspectSelected()
