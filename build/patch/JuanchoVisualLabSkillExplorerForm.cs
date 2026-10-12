@@ -244,7 +244,7 @@ namespace AssetStudioGUI
                     Name = Path.GetFileName(file.FullPath),
                     UnityClass = file.Category ?? "Package file",
                     Role = isTexture ? "Texture file" : "Skill / effect file hint",
-                    SkillGroup = VisualLabSkillAssetClassifier.ClassifySlot(file.RelativePath + " " + file.FullPath) is string slot && slot.Length > 0 ? slot : "Unassigned",
+                    SkillGroup = FileSkillGroup(file),
                     SourcePath = file.RelativePath ?? file.FullPath,
                     SerializedFileName = Path.GetFileName(file.FullPath),
                     Evidence = file.Category ?? "",
@@ -534,11 +534,21 @@ namespace AssetStudioGUI
             MessageBox.Show(this, "Select a parsed Unity object or a Unity bundle/texture file first.", "Skill & Texture2D Explorer", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
 
+        private static string FileSkillGroup(VisualLabAssetFile file)
+        {
+            var slot = VisualLabSkillAssetClassifier.ClassifySlot((file?.RelativePath ?? "") + " " + (file?.FullPath ?? ""));
+            return string.IsNullOrWhiteSpace(slot) ? "Unassigned" : slot;
+        }
+
         private static bool IsUnityBundlePath(string path)
         {
             var extension = Path.GetExtension(path ?? "");
-            return new[] { ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource" }
-                .Contains(extension, StringComparer.OrdinalIgnoreCase);
+            if (new[] { ".unity3d", ".bundle", ".assets", ".asset", ".ab", ".ress", ".resource" }
+                .Contains(extension, StringComparer.OrdinalIgnoreCase))
+                return true;
+            if (!extension.StartsWith(".split", StringComparison.OrdinalIgnoreCase)) return false;
+            var suffix = extension.Substring(6);
+            return suffix.Length > 0 && suffix.All(char.IsDigit);
         }
 
         private static string SafeFullPath(string value)
