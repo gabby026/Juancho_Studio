@@ -178,9 +178,13 @@ namespace Juancho.VisualLab
                                 var boneNode = part.BoneNodeIndices[boneId];
                                 if (boneNode < 0 || boneNode >= worlds.Length) continue;
                                 var normalizedWeight = weight / validWeightTotal;
-                                var skinMatrix = part.SkinningMatrixOrder == 1
-                                    ? worlds[boneNode] * part.BindPoses[boneId]
-                                    : part.BindPoses[boneId] * worlds[boneNode];
+                                // Unity's bind pose is bone.worldToLocal * renderer.localToWorld.
+                                // Matrices are transposed into System.Numerics row-vector space,
+                                // so the canonical vertex transform is bindPose * currentBoneWorld.
+                                // Do not guess the multiplication order per mesh: an order chosen
+                                // from a coarse rigid-pose score can produce extreme deformation
+                                // even when the rest pose looked superficially acceptable.
+                                var skinMatrix = part.BindPoses[boneId] * worlds[boneNode];
                                 p += NVector3.Transform(localPosition, skinMatrix) * normalizedWeight;
                                 n += NVector3.TransformNormal(localNormal, skinMatrix) * normalizedWeight;
                             }
@@ -652,20 +656,23 @@ namespace Juancho.VisualLab
                 min = NVector3.Min(min, v);
                 max = NVector3.Max(max, v);
             }
+
             var diagonal = Math.Max((max - min).Length(), 0.0001f);
+            var rendererWorld = worlds[part.NodeIndex];
             var stride = Math.Max(1, vertexCount / 96);
             double standardError = 0;
-            double alternateError = 0;
             double standardMaxError = 0;
-            double alternateMaxError = 0;
             int samples = 0;
 
+            // Validate only Unity's canonical matrix order. Comparing two guessed orders and
+            // choosing whichever resembles the rigid rest pose slightly more can select the
+            // inverse order for assets with nearly-identity transforms, then stretch the mesh
+            // as soon as animated bones rotate. The canonical order is always bindPose * boneWorld.
             for (int vertex = 0; vertex < vertexCount; vertex += stride)
             {
                 var source = new NVector3(part.Vertices[vertex * 3], part.Vertices[vertex * 3 + 1], part.Vertices[vertex * 3 + 2]);
                 var expected = NVector3.Transform(source, rendererWorld);
                 NVector3 standard = NVector3.Zero;
-                NVector3 alternate = NVector3.Zero;
                 float weightTotal = 0;
 
                 for (int influence = 0; influence < 4; influence++)
@@ -673,22 +680,19 @@ namespace Juancho.VisualLab
                     int slot = vertex * 4 + influence;
                     float weight = part.Weights[slot];
                     if (!IsFinite(weight) || weight <= 0) continue;
+
                     int boneIndex = part.BoneIndices[slot];
+                    int boneNode = part.BoneNodeIndices[boneIndex];
                     var bindPose = part.BindPoses[boneIndex];
-                    standard += NVector3.Transform(source, bindPose * worlds[part.BoneNodeIndices[boneIndex]]) * weight;
-                    alternate += NVector3.Transform(source, worlds[part.BoneNodeIndices[boneIndex]] * bindPose) * weight;
+                    standard += NVector3.Transform(source, bindPose * worlds[boneNode]) * weight;
                     weightTotal += weight;
                 }
 
                 if (weightTotal <= 0.00001f) continue;
                 standard /= weightTotal;
-                alternate /= weightTotal;
-                var standardNormalizedError = NVector3.Distance(standard, expected) / diagonal;
-                var alternateNormalizedError = NVector3.Distance(alternate, expected) / diagonal;
-                standardError += standardNormalizedError;
-                alternateError += alternateNormalizedError;
-                standardMaxError = Math.Max(standardMaxError, standardNormalizedError);
-                alternateMaxError = Math.Max(alternateMaxError, alternateNormalizedError);
+                var error = NVector3.Distance(standard, expected) / diagonal;
+                standardError += error;
+                standardMaxError = Math.Max(standardMaxError, error);
                 samples++;
             }
 
@@ -700,35 +704,28 @@ namespace Juancho.VisualLab
                 return;
             }
 
-            var standardMean = standardError / samples;
-            var alternateMean = alternateError / samples;
-            var standardScore = standardMean + standardMaxError * 0.10;
-            var alternateScore = alternateMean + alternateMaxError * 0.10;
-            part.SkinningMatrixOrder = alternateScore < standardScore ? 1 : 0;
-            var bestMean = part.SkinningMatrixOrder == 1 ? alternateMean : standardMean;
-            var bestMax = part.SkinningMatrixOrder == 1 ? alternateMaxError : standardMaxError;
-
-            if (!double.IsFinite(bestMean) || !double.IsFinite(bestMax) || bestMean > 0.12 || bestMax > 0.45)
+            var meanError = standardError / samples;
+            if (!double.IsFinite(meanError) || !double.IsFinite(standardMaxError) ||
+                meanError > 0.12 || standardMaxError > 0.45)
             {
-                // A hard rigid fallback is visually safe, but it makes every animation appear
-                // broken. Derive a per-bone rest matrix only after the original matrix orders
-                // fail validation. At time zero each bone contributes the renderer's rest pose;
-                // subsequent frames apply the actual relative bone motion.
+                // Never try an alternate multiplication order as a shortcut: reconstruct
+                // bind poses against the current rest transforms, and keep the source safe
+                // if the renderer/bone coordinate spaces still cannot be reconciled.
                 if (TryReconstructRestPoseBindPoses(part, worlds, rendererWorld))
                     return;
 
                 part.SkinningStatus = string.Format(
-                    "Severe bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
-                    bestMean, bestMax);
+                    "Unity-order bind-pose mismatch (mean {0:P1}, worst sampled vertex {1:P1}); rigid fallback retained",
+                    meanError, standardMaxError);
                 return;
             }
 
+            part.SkinningMatrixOrder = 0;
             part.SkinningReliable = true;
-            bool approximate = bestMean > 0.04 || bestMax > 0.20;
-            part.SkinningStatus = (approximate ? "Best-fit CPU skinning enabled (" : "Bind-pose calibrated (") +
-                (part.SkinningMatrixOrder == 1 ? "alternate matrix order" : "Unity bind-pose matrix order") +
-                ", mean error " + bestMean.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
-                ", max sampled error " + bestMax.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
+            bool approximate = meanError > 0.04 || standardMaxError > 0.20;
+            part.SkinningStatus = (approximate ? "Approximate Unity-order CPU skinning enabled (" : "Unity-order bind-pose calibrated (") +
+                "mean error " + meanError.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) +
+                ", max sampled error " + standardMaxError.ToString("P2", System.Globalization.CultureInfo.InvariantCulture) + ")";
         }
 
         private static bool TryReconstructRestPoseBindPoses(
