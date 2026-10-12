@@ -44,6 +44,7 @@ namespace AssetStudioGUI
         private readonly Button _inspectAnimationButton = new Button();
         private readonly Button _playAnimationButton = new Button();
         private readonly Button _openBundleInspectorButton = new Button();
+        private readonly Button _skillExplorerButton = new Button();
         private CancellationTokenSource _scanCancellation;
         private VisualLabScanResult _lastScan;
         private VisualLabUnityIndexResult _lastUnityIndex;
@@ -213,6 +214,11 @@ namespace AssetStudioGUI
             _openBundleInspectorButton.Enabled = false;
             _openBundleInspectorButton.Click += (s, e) => OpenHeroBundleInspector();
             toolbar.Controls.Add(_openBundleInspectorButton);
+            _skillExplorerButton.Text = "Skill 1 / 2 / 3 + Effects + Texture2D Explorer";
+            _skillExplorerButton.AutoSize = true;
+            _skillExplorerButton.Enabled = false;
+            _skillExplorerButton.Click += (s, e) => OpenSkillExplorer();
+            toolbar.Controls.Add(_skillExplorerButton);
             _objectCountStatus.AutoSize = true;
             _objectCountStatus.Padding = new Padding(10, 6, 0, 0);
             _objectCountStatus.Text = "No parsed objects";
@@ -373,6 +379,7 @@ namespace AssetStudioGUI
                     .Any(path => JuanchoVisualLabAnimationPlaybackForm.BundleHasModelAndClip(_lastUnityIndex.Assets, path));
             _openBundleInspectorButton.Enabled = _lastUnityIndex != null &&
                 JuanchoVisualLabAnimationPlaybackForm.FindHeroSkinBundlePaths(_lastUnityIndex.InputFiles).Length > 0;
+            _skillExplorerButton.Enabled = _lastUnityIndex != null && _lastUnityIndex.InputFiles.Count > 0;
         }
 
         private void OpenHeroBundleInspector()
@@ -393,6 +400,18 @@ namespace AssetStudioGUI
                 ?? heroBundles.FirstOrDefault();
             using (var inspector = new JuanchoVisualLabBundleInspectorForm(_lastUnityIndex.InputFiles, heroBundles, preferred))
                 inspector.ShowDialog(this);
+        }
+
+        private void OpenSkillExplorer()
+        {
+            if (_lastUnityIndex == null || _lastUnityIndex.InputFiles.Count == 0)
+            {
+                MessageBox.Show(this, "Scan the complete hero package folder and select Analyze Unity Bundle Contents first. Include the hero skin bundle, skill/effect bundles, and any companion asset files.", "Juancho MLBB Visual Lab", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            using (var explorer = new JuanchoVisualLabSkillExplorerForm(_lastUnityIndex, _lastScan))
+                explorer.ShowDialog(this);
         }
 
         private async Task PreviewSelectedMeshAsync()
